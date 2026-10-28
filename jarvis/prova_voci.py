@@ -92,7 +92,7 @@ def salva_voce_elevenlabs(id_voce, nome, t, descrizione):
     import voce_elevenlabs as el
 
     try:
-        audio = el.sintetizza(f"Eccomi{t}. Da questo momento parlerò con questa voce.", id_voce)
+        audio = el.sintetizza(f"Eccomi{t}. {el.FRASE_DI_CONFERMA}", id_voce)
     except el.ErroreElevenLabs as e:
         print(f"Questa voce non funziona: {e}")
         return False

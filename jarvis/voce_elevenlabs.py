@@ -28,6 +28,7 @@ TESTO_DI_PROVA = (
     "lavora da tre ore di fila."
 )
 IMPOSTAZIONI = {"stability": 0.45, "similarity_boost": 0.8, "style": 0.15, "use_speaker_boost": True}
+FRASE_DI_CONFERMA = "Da questo momento parlerò con questa voce."  # la dice solo la voce scelta in prova_voci.py
 
 
 class ErroreElevenLabs(Exception):
@@ -156,3 +157,16 @@ def sintetizza(testo, voce, modello=MODELLO_PREDEFINITO, velocita=1.0, precedent
     if not modello.startswith("eleven_multilingual_v2"):  # gli altri modelli accettano la lingua esplicita
         corpo["language_code"] = "it"
     return pcm_in_audio(richiesta(f"/v1/text-to-speech/{voce}?output_format=pcm_{FREQUENZA}", corpo, grezza=True))
+
+
+def voce_scelta_dalla_cronologia(chiave=None):
+    """(voice_id, nome) della voce scelta con prova_voci.py, ritrovata nella cronologia di ElevenLabs: la frase di
+    conferma la dice solo la voce scelta. None se non c'è (o se la chiave non può leggere la cronologia)."""
+    try:
+        elementi = richiesta("/v1/history?page_size=1000", chiave=chiave).get("history", [])
+    except (ErroreElevenLabs, ValueError, AttributeError):
+        return None
+    for elemento in sorted(elementi, key=lambda e: e.get("date_unix", 0), reverse=True):
+        if FRASE_DI_CONFERMA in (elemento.get("text") or "") and elemento.get("voice_id"):
+            return elemento["voice_id"], elemento.get("voice_name", "")
+    return None

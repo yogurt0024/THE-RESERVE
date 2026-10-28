@@ -23,6 +23,7 @@ import iniziativa
 import integrazioni
 import notifiche
 import promemoria
+import recupero
 import scarica
 import sensori
 import strumenti
@@ -208,6 +209,12 @@ class Finestra:
                                      "/aggiorna. I tuoi dati e le tue impostazioni restano come sono."))
         if self.config["ascolto"]:
             self.eventi.put(("avvia_orecchio",))
+        try:  # la voce scelta in un'altra copia di Jarvis sul PC (vedi recupero.py)
+            ritrovata = recupero.ritrova_voce(self.config, self.assistente.salva_impostazione)
+        except Exception:  # cercarla è un aiuto in più: se non va, si parte con quella che c'è
+            ritrovata = ""
+        if ritrovata:
+            self.eventi.put(("info", ritrovata))
         if self.config["parla"] != "mai":
             self._prepara_voce(saluta=True)
         else:
@@ -491,6 +498,9 @@ class Finestra:
             elenco = "\n".join(f"- {n}: {v['descrizione']}" for n, v in voce.VOCI.items())
             self._info(f"Le voci disponibili (per esempio /voce nicola):\n{elenco}", "Voci")
             return
+        if nome == "elevenlabs" and not (self.config.get("voce_elevenlabs") or "").strip():
+            threading.Thread(target=self._ritrova_elevenlabs, daemon=True).start()
+            return
         avviso = self.assistente.salva_impostazione("voce", nome)
         self.voce.zitto()
         if self.config["parla"] == "mai":
@@ -498,6 +508,22 @@ class Finestra:
         self.hud.imposta_indicatore("voce", True)
         self._info(f"Cambio voce: {voce.VOCI[nome]['descrizione']}.{avviso}")
         threading.Thread(target=self._prepara_voce, kwargs={"nuova": True}, daemon=True).start()
+
+    def _ritrova_elevenlabs(self):
+        """/voce elevenlabs senza una voce impostata: la cerca nelle altre copie di Jarvis e su ElevenLabs."""
+        try:
+            ritrovata = recupero.ritrova_voce(self.config, self.assistente.salva_impostazione, forza=True)
+        except Exception:
+            ritrovata = ""
+        if not ritrovata:
+            self.eventi.put(("info", "Non trovo la voce di ElevenLabs che avevi scelto: lancia  py -3.12 prova_voci.py "
+                                     "e rispondi p per sceglierla tra quelle pronte."))
+            return
+        self.eventi.put(("info", ritrovata))
+        if self.config["parla"] == "mai":
+            self.assistente.salva_impostazione("parla", "sempre")
+        self.voce.zitto()
+        self._prepara_voce(nuova=True)
 
     def _cambia_gioco(self, attiva):
         def cambia():

@@ -1,9 +1,9 @@
 """L'aspetto di Jarvis: un HUD in stile Iron Man disegnato su un Canvas di tkinter (incluso in Python).
 
 Al centro il reattore: gira piano quando Jarvis aspetta, si illumina quando ascolta, accelera quando pensa e
-pulsa con la voce quando parla; in modalità gioco diventa oro e rosso. Intorno: ora, meteo, stato del PC,
-promemoria, impegni e compiti. Sotto, i sottotitoli di quello che dice. Niente chat: per scrivere basta
-iniziare a digitare, e la cronologia si apre solo se la chiedi.
+pulsa con la voce quando parla; in modalità gioco diventa arancione. Sotto il reattore, la linea della voce.
+Intorno: ora, meteo, stato del PC, promemoria, impegni e compiti. Sotto, i sottotitoli di quello che dice.
+Niente chat: per scrivere basta iniziare a digitare, e la cronologia si apre solo se la chiedi.
 """
 
 import math
@@ -15,7 +15,9 @@ from datetime import datetime
 
 COLORI = {
     "sfondo": "#02060c",
-    "griglia": "#061019",
+    "esagoni": "#0b2533",
+    "pannello": "#040d16",
+    "bordo_pannello": "#0d2f3f",
     "linea": "#0e3446",
     "attenuato": "#4b8aa3",
     "testo": "#d9f5ff",
@@ -26,9 +28,10 @@ COLORI = {
     "errore": "#ff3b4e",
     "gioco": "#ff8a3d",
 }
-CARATTERE = "Segoe UI"
-CARATTERE_SOTTILE = "Segoe UI Light"
-CARATTERE_NUMERI = "Consolas"
+# I caratteri preferiti, se ci sono sul PC: Bahnschrift è quello "tecnico" di Windows 10 e 11.
+TECNICO = ("Bahnschrift", "Segoe UI", "DejaVu Sans")
+SOTTILE = ("Bahnschrift Light", "Segoe UI Light", "Segoe UI", "DejaVu Sans")
+TESTO = ("Segoe UI", "DejaVu Sans")
 GIORNI = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
 MESI = ["gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno", "luglio", "agosto", "settembre", "ottobre",
         "novembre", "dicembre"]
@@ -46,6 +49,9 @@ INDICATORI = [("microfono", "MICROFONO"), ("voce", "VOCE"), ("gioco", "MODALITÀ
 SENSORI = [("cpu", "CPU", "%"), ("ram", "MEMORIA", "%"), ("gpu", "GPU", "%"), ("disco", "DISCO", "%")]
 DURATA_SOTTOTITOLI = 25  # secondi: poi i sottotitoli si spengono
 LUNGHEZZA_SOTTOTITOLI = 240  # caratteri: di una risposta lunga si vede la parte finale
+PUNTI_ONDA = 90  # la linea della voce
+STRATI_ALONE = 24  # l'alone intorno al reattore (più strati = sfumatura più morbida)
+DURATA_ACCENSIONE = 1.8  # secondi: gli anelli si "montano" all'avvio
 
 
 def mescola(colore1, colore2, quota):
@@ -69,6 +75,11 @@ def coda_del_testo(testo, massimo=LUNGHEZZA_SOTTOTITOLI):
     return "… " + coda
 
 
+def _famiglia(preferite):
+    disponibili = set(tkfont.families())
+    return next((f for f in preferite if f in disponibili), preferite[-1])
+
+
 class Hud:
     def __init__(self, root, nome):
         self.root = root
@@ -76,27 +87,30 @@ class Hud:
         c = COLORI
         self.tela = tk.Canvas(root, bg=c["sfondo"], highlightthickness=0, borderwidth=0)
         self.tela.pack(fill="both", expand=True)
-        self.font = {
-            "titolo": tkfont.Font(family=CARATTERE, size=13, weight="bold"),
-            "orologio": tkfont.Font(family=CARATTERE_SOTTILE, size=34),
-            "data": tkfont.Font(family=CARATTERE, size=11),
-            "meteo": tkfont.Font(family=CARATTERE_SOTTILE, size=30),
-            "piccolo": tkfont.Font(family=CARATTERE, size=9),
-            "etichetta": tkfont.Font(family=CARATTERE, size=9, weight="bold"),
-            "numero": tkfont.Font(family=CARATTERE_NUMERI, size=11, weight="bold"),
-            "riga": tkfont.Font(family=CARATTERE, size=10),
-            "stato": tkfont.Font(family=CARATTERE, size=11, weight="bold"),
-            "sottotitoli": tkfont.Font(family=CARATTERE, size=17),
-            "domanda": tkfont.Font(family=CARATTERE, size=12, slant="italic"),
-            "campo": tkfont.Font(family=CARATTERE, size=13),
+        tecnico, sottile, testo = _famiglia(TECNICO), _famiglia(SOTTILE), _famiglia(TESTO)
+        self._basi = {  # nome: (famiglia, grandezza, stile)
+            "titolo": (tecnico, 13, "bold"), "orologio": (sottile, 40, ""), "secondi": (sottile, 18, ""),
+            "data": (testo, 11, ""), "meteo": (sottile, 34, ""), "piccolo": (tecnico, 9, ""),
+            "etichetta": (tecnico, 9, "bold"), "numero": (tecnico, 12, "bold"), "riga": (testo, 10, ""),
+            "stato": (tecnico, 12, "bold"), "sottotitoli": (testo, 17, ""), "domanda": (testo, 12, "italic"),
+            "campo": (testo, 13, ""), "gradi": (tecnico, 8, ""),
         }
+        self.font = {}
+        for nome_font, (famiglia, grandezza, stile) in self._basi.items():
+            self.font[nome_font] = tkfont.Font(family=famiglia, size=grandezza,
+                                               weight="bold" if stile == "bold" else "normal",
+                                               slant="italic" if stile == "italic" else "roman")
         self.al_clic_indicatore = lambda nome: None
         self.al_invio = lambda testo: None
         self._stato = "avvio"
         self._gioco = False
         self._lampo = None  # (colore, fino a quando)
-        self._angoli = [0.0, 0.0, 0.0]
-        self._livello = 0.0  # quanto "forte" parla, per le barre intorno al nucleo
+        self._angoli = [0.0, 0.0, 0.0, 0.0]
+        self._velocita = list(STATI["avvio"][:3])
+        self._luce = 0.3
+        self._colore = c["accento"]
+        self._colore_alone = None
+        self._livello = 0.0  # quanto "forte" parla, per le barre e la linea della voce
         self._obiettivo = 0.0
         self._barre_altezze = [0.0] * 64
         self._ultimo = time.monotonic()
@@ -104,10 +118,9 @@ class Hud:
         self._sottotitolo = ("", "jarvis", 0.0)  # testo, tipo, quando
         self._domanda = ("", 0.0)
         self._log = ("", 0.0)
-        self._dettaglio = ""
-        self._meteo = None
         self._sensori = {}
         self._agenda = []
+        self._righe_disegnate = None
         self._indicatori = {nome: (False, True) for nome, _ in INDICATORI}
         self._larghezza = self._altezza = 0
         self._crea_dinamici()
@@ -119,26 +132,37 @@ class Hud:
 
     def _crea_dinamici(self):
         t, c = self.tela, COLORI
-        self.anelli = {
-            "spazzata": t.create_arc(0, 0, 1, 1, style="arc", width=4, extent=46, outline=c["accento"]),
-            "a": [t.create_arc(0, 0, 1, 1, style="arc", width=7, extent=78, outline=c["accento"]) for _ in range(3)],
-            "b": [t.create_arc(0, 0, 1, 1, style="arc", width=3, extent=34, outline=c["accento"]) for _ in range(6)],
-            "tratteggio": t.create_oval(0, 0, 1, 1, outline=c["linea"], width=2, dash=(2, 7)),
-            "reattore": t.create_oval(0, 0, 1, 1, outline=c["accento"], width=9),
-        }
-        self.barre = [t.create_line(0, 0, 0, 0, fill=c["accento"], width=3, capstyle="round") for _ in range(64)]
+        self.alone_esterno = [t.create_oval(0, 0, 1, 1, fill=c["sfondo"], outline="", tags="alone_esterno")
+                              for _ in range(STRATI_ALONE)]
+
+        def arco(larghezza, ampiezza):
+            return t.create_arc(0, 0, 1, 1, style="arc", width=larghezza, extent=ampiezza, outline=c["accento"])
+
+        self.marcatori = [arco(4, 5) for _ in range(2)]
+        self.spazzata = (arco(10, 46), arco(3, 46))  # (alone, linea)
+        self.anelli_a = [(arco(20, 78), arco(7, 78)) for _ in range(3)]
+        self.anelli_b = [arco(3, 34) for _ in range(6)]
+        self.tratteggio = t.create_oval(0, 0, 1, 1, outline=c["linea"], width=2, dash=(2, 7))
+        self.reattore = (t.create_oval(0, 0, 1, 1, outline=c["accento"], width=22),
+                         t.create_oval(0, 0, 1, 1, outline=c["accento"], width=9))
+        self.barre = [t.create_line(0, 0, 0, 0, fill=c["accento"], width=3, capstyle="round", state="hidden")
+                      for _ in range(64)]
         self.alone = [t.create_oval(0, 0, 1, 1, fill=c["sfondo"], outline="") for _ in range(5)]
         self.nucleo = t.create_oval(0, 0, 1, 1, fill=c["chiaro"], outline="")
+        punti = [0, 0] * PUNTI_ONDA
+        self.onda = (t.create_line(*punti, fill=c["linea"], width=6, smooth=True, capstyle="round"),
+                     t.create_line(*punti, fill=c["accento"], width=2, smooth=True, capstyle="round"))
         self.scritta_stato = t.create_text(0, 0, text="", fill=c["accento"], font=self.font["stato"])
         self.scritta_dettaglio = t.create_text(0, 0, text="", fill=c["attenuato"], font=self.font["piccolo"])
         self.orologio = t.create_text(0, 0, text="", fill=c["testo"], font=self.font["orologio"], anchor="nw")
+        self.secondi = t.create_text(0, 0, text="", fill=c["attenuato"], font=self.font["secondi"], anchor="nw")
         self.data = t.create_text(0, 0, text="", fill=c["attenuato"], font=self.font["data"], anchor="nw")
         self.gradi = t.create_text(0, 0, text="", fill=c["testo"], font=self.font["meteo"], anchor="ne")
         self.cielo = t.create_text(0, 0, text="", fill=c["attenuato"], font=self.font["data"], anchor="ne")
         self.domanda_testo = t.create_text(0, 0, text="", fill=c["utente"], font=self.font["domanda"],
                                            justify="center")
         self.sottotitoli = t.create_text(0, 0, text="", fill=c["testo"], font=self.font["sottotitoli"],
-                                         justify="center")
+                                         justify="center", anchor="n")
         self.log_testo = t.create_text(0, 0, text="", fill=c["attenuato"], font=self.font["riga"], justify="center")
         self.indicatori = {}
         for nome, etichetta in INDICATORI:
@@ -154,6 +178,8 @@ class Hud:
         for chiave, etichetta, _ in SENSORI:
             self.misuratori[chiave] = (
                 t.create_oval(0, 0, 1, 1, outline=c["linea"], width=5, tags="pannello_sinistro"),
+                t.create_arc(0, 0, 1, 1, style="arc", width=12, start=90, extent=0, outline=c["linea"],
+                             tags="pannello_sinistro"),
                 t.create_arc(0, 0, 1, 1, style="arc", width=5, start=90, extent=0, outline=c["accento"],
                              tags="pannello_sinistro"),
                 t.create_text(0, 0, text="--", fill=c["testo"], font=self.font["numero"], tags="pannello_sinistro"),
@@ -175,23 +201,25 @@ class Hud:
 
     def _crea_scheda(self):
         c = COLORI
+        fondo = "#03101a"
         self.scheda_cornice = tk.Frame(self.tela, bg=c["accento"], padx=1, pady=1)
-        interno = tk.Frame(self.scheda_cornice, bg="#03101a")
+        interno = tk.Frame(self.scheda_cornice, bg=fondo)
         interno.pack(fill="both", expand=True)
-        testata = tk.Frame(interno, bg="#03101a")
+        testata = tk.Frame(interno, bg=fondo)
         testata.pack(fill="x", padx=16, pady=(12, 4))
-        self.scheda_titolo = tk.Label(testata, text="", font=self.font["stato"], fg=c["accento"], bg="#03101a")
+        self.scheda_titolo = tk.Label(testata, text="", font=self.font["stato"], fg=c["accento"], bg=fondo)
         self.scheda_titolo.pack(side="left")
-        chiudi = tk.Label(testata, text="✕  ESC", font=self.font["etichetta"], fg=c["attenuato"], bg="#03101a",
+        chiudi = tk.Label(testata, text="✕  ESC", font=self.font["etichetta"], fg=c["attenuato"], bg=fondo,
                           cursor="hand2")
         chiudi.pack(side="right")
         chiudi.bind("<Button-1>", lambda e: self.chiudi_scheda())
-        corpo = tk.Frame(interno, bg="#03101a")
+        tk.Frame(interno, bg=c["linea"], height=1).pack(fill="x", padx=16, pady=(0, 8))
+        corpo = tk.Frame(interno, bg=fondo)
         corpo.pack(fill="both", expand=True, padx=16, pady=(0, 14))
-        self.scheda_testo = tk.Text(corpo, wrap="word", font=self.font["riga"], bg="#03101a", fg=c["testo"],
+        self.scheda_testo = tk.Text(corpo, wrap="word", font=self.font["riga"], bg=fondo, fg=c["testo"],
                                     relief="flat", borderwidth=0, highlightthickness=0, padx=4, pady=4,
                                     spacing1=2, spacing3=2, cursor="arrow")
-        barra = tk.Scrollbar(corpo, command=self.scheda_testo.yview, bg="#03101a", troughcolor="#03101a",
+        barra = tk.Scrollbar(corpo, command=self.scheda_testo.yview, bg=fondo, troughcolor=fondo,
                              relief="flat", borderwidth=0, width=10)
         self.scheda_testo.configure(yscrollcommand=barra.set)
         barra.pack(side="right", fill="y")
@@ -210,22 +238,19 @@ class Hud:
             return
         self._larghezza, self._altezza = w, h
         t, c = self.tela, COLORI
-        scala = max(0.7, min(1.6, min(w / 1280, h / 800)))
-        for nome, base in (("titolo", 13), ("orologio", 34), ("data", 11), ("meteo", 30), ("piccolo", 9),
-                           ("etichetta", 9), ("numero", 11), ("riga", 10), ("stato", 11), ("sottotitoli", 17),
-                           ("domanda", 12), ("campo", 13)):
-            self.font[nome].configure(size=max(7, round(base * scala)))
+        self.scala = scala = max(0.7, min(1.6, min(w / 1280, h / 800)))
+        for nome, (_, grandezza, _) in self._basi.items():
+            self.font[nome].configure(size=max(7, round(grandezza * scala)))
         t.delete("statico")
-        # Una griglia leggera sullo sfondo.
-        passo = max(36, round(48 * scala))
-        for x in range(0, w, passo):
-            t.create_line(x, 0, x, h, fill=c["griglia"], tags=("statico", "griglia"))
-        for y in range(0, h, passo):
-            t.create_line(0, y, w, y, fill=c["griglia"], tags=("statico", "griglia"))
-        self.cx, self.cy = w / 2, h * 0.40
-        self.raggio = r = max(60, min(w * 0.19, h * 0.25))
+        self.cx, self.cy = w / 2, h * 0.38
+        self.raggio = r = max(60, min(w * 0.18, h * 0.235))
         cx, cy = self.cx, self.cy
-        # Anelli fissi: il bordo esterno e le tacche.
+        self._esagoni(w, h, scala)
+        for i, ovale in enumerate(self.alone_esterno):  # l'alone: cerchi sempre più piccoli e più chiari
+            quota = 1.9 - i * (0.95 / STRATI_ALONE)
+            t.coords(ovale, cx - r * quota, cy - r * quota, cx + r * quota, cy + r * quota)
+        self._colore_alone = None
+        # Le parti fisse del reattore: il bordo, le tacche e i gradi.
         t.create_oval(cx - r * 1.08, cy - r * 1.08, cx + r * 1.08, cy + r * 1.08, outline=c["linea"], width=1,
                       tags="statico")
         for i in range(96):
@@ -234,60 +259,85 @@ class Hud:
             x0, y0 = cx + math.cos(angolo) * r * 0.99, cy + math.sin(angolo) * r * 0.99
             x1, y1 = cx + math.cos(angolo) * r * (0.99 - lungo), cy + math.sin(angolo) * r * (0.99 - lungo)
             t.create_line(x0, y0, x1, y1, fill=c["linea"], width=2 if i % 8 == 0 else 1, tags="statico")
+        for gradi in (45, 135, 225, 315):
+            angolo = math.radians(gradi - 90)
+            t.create_text(cx + math.cos(angolo) * r * 1.17, cy + math.sin(angolo) * r * 1.17, text=f"{gradi:03d}",
+                          fill=c["linea"], font=self.font["gradi"], tags="statico")
         t.create_oval(cx - r * 0.58, cy - r * 0.58, cx + r * 0.58, cy + r * 0.58, outline=c["linea"], width=1,
                       tags="statico")
 
         def cerchio(item, quota):
             t.coords(item, cx - r * quota, cy - r * quota, cx + r * quota, cy + r * quota)
 
-        cerchio(self.anelli["spazzata"], 0.95)
-        for arco in self.anelli["a"]:
+        for marcatore in self.marcatori:
+            cerchio(marcatore, 1.08)
+        for item in self.spazzata:
+            cerchio(item, 0.95)
+        for alone, arco in self.anelli_a:
+            cerchio(alone, 0.84)
             cerchio(arco, 0.84)
-        for arco in self.anelli["b"]:
+            t.itemconfigure(arco, width=max(3, round(r * 0.045)))
+            t.itemconfigure(alone, width=max(8, round(r * 0.12)))
+        for arco in self.anelli_b:
             cerchio(arco, 0.72)
-        cerchio(self.anelli["tratteggio"], 0.64)
-        cerchio(self.anelli["reattore"], 0.44)
+        cerchio(self.tratteggio, 0.64)
+        for item in self.reattore:
+            cerchio(item, 0.44)
+        t.itemconfigure(self.reattore[1], width=max(4, round(r * 0.06)))
+        t.itemconfigure(self.reattore[0], width=max(10, round(r * 0.15)))
         for i, alone in enumerate(self.alone):
             cerchio(alone, 0.36 - i * 0.05)
         cerchio(self.nucleo, 0.12)
-        t.itemconfigure(self.anelli["reattore"], width=max(4, round(r * 0.06)))
-        for arco in self.anelli["a"]:
-            t.itemconfigure(arco, width=max(3, round(r * 0.045)))
-        t.coords(self.scritta_stato, cx, cy + r * 1.2)
-        t.coords(self.scritta_dettaglio, cx, cy + r * 1.2 + self.font["stato"].metrics("linespace") + 2)
+        # Sotto il reattore: la linea della voce, lo stato e il dettaglio.
+        self.y_onda = cy + r * 1.24
+        y_stato = self.y_onda + r * 0.1 + self.font["stato"].metrics("linespace") * 0.6
+        t.coords(self.scritta_stato, cx, y_stato)
+        y_dettaglio = y_stato + self.font["stato"].metrics("linespace")
+        t.coords(self.scritta_dettaglio, cx, y_dettaglio)
         # In alto: nome e ora a sinistra, meteo a destra.
         margine = max(18, round(28 * scala))
-        t.create_text(margine, margine, text=".".join(self.nome.upper()) + ".",
-                      fill=c["accento"], font=self.font["titolo"], anchor="nw", tags="statico")
-        t.create_line(margine, margine + self.font["titolo"].metrics("linespace") + 4, margine + 180 * scala,
-                      margine + self.font["titolo"].metrics("linespace") + 4, fill=c["linea"], tags="statico")
-        y = margine + self.font["titolo"].metrics("linespace") + 10
+        alto_titolo = self.font["titolo"].metrics("linespace")
+        t.create_text(margine, margine, text=".".join(self.nome.upper()) + ".", fill=c["accento"],
+                      font=self.font["titolo"], anchor="nw", tags="statico")
+        for x0, x1 in ((margine, margine + 200 * scala), (w - margine - 200 * scala, w - margine)):
+            t.create_line(x0, margine + alto_titolo + 4, x1, margine + alto_titolo + 4, fill=c["linea"],
+                          tags="statico")
+        t.create_line(margine, margine + alto_titolo + 4, margine + 46 * scala, margine + alto_titolo + 4,
+                      fill=c["accento"], width=2, tags="statico")
+        y = margine + alto_titolo + 10
+        self._posizione_orologio = (margine - 2, y)
         t.coords(self.orologio, margine - 2, y)
         t.coords(self.data, margine, y + self.font["orologio"].metrics("linespace"))
-        t.coords(self.gradi, w - margine, margine)
-        t.coords(self.cielo, w - margine, margine + self.font["meteo"].metrics("linespace"))
+        t.coords(self.gradi, w - margine, y - 4)
+        t.coords(self.cielo, w - margine, y - 4 + self.font["meteo"].metrics("linespace"))
         # Pannelli laterali (solo se c'è spazio).
         laterali = w >= 860
         t.itemconfigure("pannello_sinistro", state="normal" if laterali else "hidden")
         t.itemconfigure("pannello_destro", state="normal" if laterali else "hidden")
-        larghezza_pannello = min(w * 0.22, 300 * scala)
+        self._laterali = laterali
+        self._larghezza_pannello = min(w * 0.22, 300 * scala)
+        self._y_pannelli = h * 0.27
+        self._margine = margine
         if laterali:
-            self._pannello_sistema(margine, h * 0.30, larghezza_pannello, scala)
-            self._pannello_agenda(w - margine - larghezza_pannello, h * 0.30, larghezza_pannello)
+            self._pannello_sistema(margine, self._y_pannelli, self._larghezza_pannello, scala)
+        self._righe_disegnate = None
+        self._pannello_agenda()
         # In basso: domanda, sottotitoli, campo per scrivere e indicatori.
         larghezza_testo = min(w * 0.72, 980 * scala)
-        y_sotto = cy + r * 1.2 + self.font["stato"].metrics("linespace") * 2.6
+        y_sotto = y_dettaglio + self.font["piccolo"].metrics("linespace") * 1.6
         t.coords(self.domanda_testo, cx, y_sotto)
         t.itemconfigure(self.domanda_testo, width=larghezza_testo)
-        t.coords(self.sottotitoli, cx, y_sotto + self.font["domanda"].metrics("linespace") * 1.4)
-        t.itemconfigure(self.sottotitoli, width=larghezza_testo, anchor="n")
-        t.coords(self.log_testo, cx, h - margine * 2.6)
+        t.coords(self.sottotitoli, cx, y_sotto + self.font["domanda"].metrics("linespace") * 0.9)
+        t.itemconfigure(self.sottotitoli, width=larghezza_testo)
+        y_log = h - margine * 2.7
+        t.coords(self.log_testo, cx, y_log)
         t.itemconfigure(self.log_testo, width=larghezza_testo)
-        t.coords(self.finestra_campo, cx, h - margine * 2.6)
+        t.coords(self.finestra_campo, cx, y_log)
         t.itemconfigure(self.finestra_campo, width=min(w * 0.6, 760 * scala),
                         height=self.font["campo"].metrics("linespace") + 20)
-        x = margine
         y = h - margine
+        t.create_line(margine, y - margine * 0.9, w - margine, y - margine * 0.9, fill="#071a24", tags="statico")
+        x = margine
         for nome, _ in INDICATORI:
             punto, scritta = self.indicatori[nome]
             d = max(8, round(10 * scala))
@@ -298,46 +348,102 @@ class Hud:
         t.itemconfigure(self.suggerimento, text="Scrivi per parlarmi  ·  Esc interrompe  ·  F2 cronologia  ·  "
                                                 "F1 aiuto  ·  F11 schermo intero" if w >= 1100 else
                         "Scrivi per parlarmi  ·  F2 cronologia")
+        # Gli strati: l'alone in fondo, sopra gli esagoni, poi le parti fisse, poi tutto quello che si muove.
         t.tag_lower("statico")
         t.tag_lower("griglia")
+        t.tag_lower("alone_esterno")
         if self.scheda_aperta:
             self._posiziona_scheda()
         self._ridisegna_indicatori()
         self._ridisegna_pannelli()
 
-    def _cornice(self, x0, y0, x1, y1, titolo, tag):
+    def _esagoni(self, w, h, scala):
+        """Lo sfondo a nido d'ape: più acceso vicino al reattore e più scuro verso i bordi, ma non dietro al
+        reattore, che resta pulito."""
         t, c = self.tela, COLORI
-        lato = 14
-        for (x, y, dx, dy) in ((x0, y0, 1, 1), (x1, y0, -1, 1), (x0, y1, 1, -1), (x1, y1, -1, -1)):
-            t.create_line(x, y, x + dx * lato, y, fill=c["attenuato"], width=2, tags=("statico", tag))
-            t.create_line(x, y, x, y + dy * lato, fill=c["attenuato"], width=2, tags=("statico", tag))
-        t.create_text(x0 + 6, y0 - 6, text=titolo, fill=c["accento"], font=self.font["etichetta"], anchor="sw",
-                      tags=("statico", tag))
+        lato = 26 * scala
+        larghezza, altezza = math.sqrt(3) * lato, 1.5 * lato
+        lontano = max(w, h) * 0.75
+        riga = 0
+        y = 0.0
+        while y < h + lato:
+            x = (larghezza / 2 if riga % 2 else 0.0)
+            while x < w + larghezza:
+                distanza = math.hypot(x - self.cx, y - self.cy)
+                vicino = (distanza - self.raggio * 1.2) / (self.raggio * 0.6)
+                if vicino <= 0:
+                    x += larghezza
+                    continue
+                colore = mescola(c["sfondo"], c["esagoni"], (0.3 + 0.7 * max(0.0, 1 - distanza / lontano))
+                                 * min(1.0, vicino))
+                punti = []
+                for k in range(6):
+                    angolo = math.radians(60 * k - 30)
+                    punti += [x + math.cos(angolo) * lato * 0.94, y + math.sin(angolo) * lato * 0.94]
+                t.create_polygon(*punti, fill="", outline=colore, tags=("statico", "griglia"))
+                x += larghezza
+            y += altezza
+            riga += 1
+
+    def _pannello(self, x0, y0, x1, y1, titolo, tag):
+        """Un pannello con gli angoli tagliati, il titolo e una lineetta accesa."""
+        t, c = self.tela, COLORI
+        taglio = 12 * self.scala
+        t.create_polygon(x0 + taglio, y0, x1, y0, x1, y1 - taglio, x1 - taglio, y1, x0, y1, x0, y0 + taglio,
+                         fill=c["pannello"], outline=c["bordo_pannello"], tags=tag)
+        t.create_line(x0, y0 + taglio, x0 + taglio, y0, fill=c["accento"], width=2, tags=tag)
+        t.create_line(x1 - taglio, y1, x1, y1 - taglio, fill=c["accento"], width=2, tags=tag)
+        alto = self.font["etichetta"].metrics("linespace")
+        t.create_text(x0 + 16 * self.scala, y0 + 10 * self.scala, text=titolo, fill=c["accento"],
+                      font=self.font["etichetta"], anchor="nw", tags=tag)
+        t.create_line(x0 + 16 * self.scala, y0 + 10 * self.scala + alto + 3, x1 - 16 * self.scala,
+                      y0 + 10 * self.scala + alto + 3, fill=c["bordo_pannello"], tags=tag)
+        return y0 + 10 * self.scala + alto + 12 * self.scala  # dove comincia il contenuto
 
     def _pannello_sistema(self, x0, y0, larghezza, scala):
-        t = self.tela
+        t, c = self.tela, COLORI
         lato = larghezza / 2
-        raggio = min(lato * 0.32, 42 * scala)
-        altezza = lato * 2 + 4 + self.font["riga"].metrics("linespace") * 2.6
-        self._cornice(x0, y0, x0 + larghezza, y0 + altezza, "SISTEMA", "pannello_sinistro")
+        raggio = min(lato * 0.3, 40 * scala)
+        alto_cella = raggio * 2 + self.font["etichetta"].metrics("linespace") + 24 * scala
+        altezza_pannello = (10 * scala + self.font["etichetta"].metrics("linespace") + 12 * scala + alto_cella * 2
+                            + self.font["riga"].metrics("linespace") * 2.4)
+        inizio = self._pannello(x0, y0, x0 + larghezza, y0 + altezza_pannello, "SISTEMA", ("statico",
+                                                                                        "pannello_sinistro"))
         for i, (chiave, _, _) in enumerate(SENSORI):
             cx = x0 + lato * (i % 2) + lato / 2
-            cy = y0 + lato * (i // 2) + lato / 2
-            anello, arco, valore, etichetta = self.misuratori[chiave]
-            t.coords(anello, cx - raggio, cy - raggio, cx + raggio, cy + raggio)
-            t.coords(arco, cx - raggio, cy - raggio, cx + raggio, cy + raggio)
+            cy = inizio + alto_cella * (i // 2) + raggio + 10 * scala
+            anello, alone, arco, valore, etichetta = self.misuratori[chiave]
+            for item in (anello, alone, arco):
+                t.coords(item, cx - raggio, cy - raggio, cx + raggio, cy + raggio)
             t.coords(valore, cx, cy)
-            t.coords(etichetta, cx, cy + raggio + 12 * scala)
-        t.coords(self.extra_sistema, x0 + 8, y0 + lato * 2 + 4)
-        t.itemconfigure(self.extra_sistema, width=larghezza - 16)
+            t.coords(etichetta, cx, cy + raggio + 13 * scala)
+            for k in range(24):  # le tacche intorno al misuratore
+                angolo = math.radians(k * 15)
+                r0, r1 = raggio * 1.16, raggio * (1.24 if k % 6 == 0 else 1.2)
+                t.create_line(cx + math.cos(angolo) * r0, cy + math.sin(angolo) * r0, cx + math.cos(angolo) * r1,
+                              cy + math.sin(angolo) * r1, fill=c["linea"], tags=("statico", "pannello_sinistro"))
+        t.coords(self.extra_sistema, x0 + 16 * scala, inizio + alto_cella * 2)
+        t.itemconfigure(self.extra_sistema, width=larghezza - 32 * scala)
 
-    def _pannello_agenda(self, x0, y0, larghezza):
-        altezza = len(self.righe_agenda) * (self.font["riga"].metrics("linespace") * 2.3) + 16
-        self._cornice(x0, y0, x0 + larghezza, y0 + altezza, "IN PROGRAMMA", "pannello_destro")
-        passo = self.font["riga"].metrics("linespace") * 2.3
+    def _pannello_agenda(self):
+        """Il pannello IN PROGRAMMA: alto quanto le righe che contiene."""
+        t = self.tela
+        t.delete("cornice_agenda")
+        if not self._larghezza or not self._laterali:
+            return
+        larghezza = self._larghezza_pannello
+        x0 = self._larghezza - self._margine - larghezza
+        y0 = self._y_pannelli
+        passo = self.font["riga"].metrics("linespace") * 2.4
+        quante = max(1, min(len(self._agenda), len(self.righe_agenda)))
+        alto_testa = 10 * self.scala + self.font["etichetta"].metrics("linespace") + 12 * self.scala
+        inizio = self._pannello(x0, y0, x0 + larghezza, y0 + alto_testa + quante * passo + 6 * self.scala,
+                                "IN PROGRAMMA", "cornice_agenda")
+        t.tag_lower("cornice_agenda", self.righe_agenda[0])
         for i, riga in enumerate(self.righe_agenda):
-            self.tela.coords(riga, x0 + 10, y0 + 12 + i * passo)
-            self.tela.itemconfigure(riga, width=larghezza - 20)
+            t.coords(riga, x0 + 16 * self.scala, inizio + i * passo)
+            t.itemconfigure(riga, width=larghezza - 32 * self.scala)
+        self._righe_disegnate = quante
 
     # --- Quello che la finestra può cambiare ---
 
@@ -370,11 +476,9 @@ class Hud:
         self.tela.itemconfigure(self.log_testo, text=coda_del_testo(testo, 260), fill=COLORI["attenuato"])
 
     def dettaglio(self, testo):
-        self._dettaglio = testo
         self.tela.itemconfigure(self.scritta_dettaglio, text=testo)
 
     def imposta_meteo(self, gradi, descrizione):
-        self._meteo = (gradi, descrizione)
         self.tela.itemconfigure(self.gradi, text=f"{round(gradi)}°" if gradi is not None else "")
         self.tela.itemconfigure(self.cielo, text=descrizione)
 
@@ -385,6 +489,8 @@ class Hud:
     def imposta_agenda(self, righe):
         """righe: [(testo, tipo)] con tipo "promemoria", "evento", "compito" o "nota"."""
         self._agenda = righe[:len(self.righe_agenda)]
+        if self._larghezza and max(1, len(self._agenda)) != self._righe_disegnate:
+            self._pannello_agenda()
         self._ridisegna_pannelli()
 
     def imposta_indicatore(self, nome, acceso, disponibile=True):
@@ -404,15 +510,18 @@ class Hud:
     def _ridisegna_pannelli(self):
         t, c = self.tela, COLORI
         for chiave, _, unita in SENSORI:
-            _, arco, valore, _ = self.misuratori[chiave]
+            _, alone, arco, valore, _ = self.misuratori[chiave]
             numero = self._sensori.get(chiave)
             if numero is None:
                 t.itemconfigure(valore, text="--")
                 t.itemconfigure(arco, extent=0)
+                t.itemconfigure(alone, extent=0)
                 continue
             colore = c["errore"] if numero >= 92 else c["avviso"] if numero >= 80 else c["accento"]
+            ampiezza = -max(1, min(359.9, numero * 3.6))
             t.itemconfigure(valore, text=f"{numero:.0f}{unita}")
-            t.itemconfigure(arco, extent=-max(1, min(359.9, numero * 3.6)), outline=colore)
+            t.itemconfigure(arco, extent=ampiezza, outline=colore)
+            t.itemconfigure(alone, extent=ampiezza, outline=mescola(c["sfondo"], colore, 0.22))
         extra = []
         if self._sensori.get("gpu_temp") is not None:
             extra.append(f"Scheda video {self._sensori['gpu_temp']}°C · memoria video "
@@ -492,12 +601,20 @@ class Hud:
 
     def _disegna(self, adesso, dt):
         t, c = self.tela, COLORI
-        velocita_a, velocita_b, velocita_spazzata, luce, scritta = STATI[self._stato]
-        colore = c["errore"] if self._stato == "errore" else c["gioco"] if self._gioco else c["accento"]
+        *velocita, luce, scritta = STATI[self._stato]
+        # Gli stati si passano il testimone piano: velocità, luce e colore cambiano in un attimo, non di colpo.
+        morbido = min(1.0, dt * 3)
+        for i in range(3):
+            self._velocita[i] += (velocita[i] - self._velocita[i]) * morbido
+        self._luce += (luce - self._luce) * morbido
+        obiettivo = c["errore"] if self._stato == "errore" else c["gioco"] if self._gioco else c["accento"]
+        self._colore = mescola(self._colore, obiettivo, min(1.0, dt * 5))
+        colore = self._colore
         if self._lampo and adesso < self._lampo[1]:
             colore = mescola(c["sfondo"], self._lampo[0], 0.6 + 0.4 * abs(math.sin(adesso * 6)))
         elif self._lampo:
             self._lampo = None
+        luce = self._luce
         respiro = (math.sin((adesso - self._inizio) * (5.5 if self._stato == "pensa" else 1.6)) + 1) / 2
         if self._stato == "parla":
             if random.random() < 0.25:
@@ -505,23 +622,54 @@ class Hud:
             self._livello += (self._obiettivo - self._livello) * min(1.0, dt * 14)
         else:
             self._livello += (0 - self._livello) * min(1.0, dt * 6)
-        self._angoli[0] = (self._angoli[0] + velocita_a * dt) % 360
-        self._angoli[1] = (self._angoli[1] + velocita_b * dt) % 360
-        self._angoli[2] = (self._angoli[2] - velocita_spazzata * dt) % 360
+        for i, v in enumerate(self._velocita + [-self._velocita[2] * 0.25]):
+            self._angoli[i] = (self._angoli[i] + v * dt) % 360
+        # All'accensione gli anelli si "montano": crescono dal nulla fino alla loro lunghezza.
+        montaggio = min(1.0, (adesso - self._inizio) / DURATA_ACCENSIONE)
+        montaggio = 1 - (1 - montaggio) ** 3
         acceso = mescola(c["sfondo"], colore, luce * (0.75 + 0.25 * respiro))
-        t.itemconfigure(self.anelli["spazzata"], start=self._angoli[2], outline=mescola(c["sfondo"], colore, luce))
-        for i, arco in enumerate(self.anelli["a"]):
-            t.itemconfigure(arco, start=self._angoli[0] + i * 120, outline=acceso)
-        for i, arco in enumerate(self.anelli["b"]):
-            t.itemconfigure(arco, start=self._angoli[1] + i * 60, outline=mescola(c["sfondo"], colore, luce * 0.7))
-        t.itemconfigure(self.anelli["reattore"], outline=mescola(c["sfondo"], colore, 0.55 + 0.45 * max(
-            respiro * luce, self._livello)))
+        alone_anelli = mescola(c["sfondo"], colore, 0.16 * luce + 0.06 * respiro)
+        if colore != self._colore_alone:  # l'alone grande cambia solo con il colore
+            self._colore_alone = colore
+            for i, ovale in enumerate(self.alone_esterno):
+                t.itemconfigure(ovale, fill=mescola(c["sfondo"], colore, 0.11 * (i / STRATI_ALONE) ** 2))
+        for i, marcatore in enumerate(self.marcatori):
+            t.itemconfigure(marcatore, start=self._angoli[3] + i * 180, outline=mescola(c["sfondo"], colore, 0.7))
+        t.itemconfigure(self.spazzata[0], start=self._angoli[2], extent=46 * montaggio, outline=alone_anelli)
+        t.itemconfigure(self.spazzata[1], start=self._angoli[2], extent=46 * montaggio,
+                        outline=mescola(c["sfondo"], colore, luce))
+        for i, (alone, arco) in enumerate(self.anelli_a):
+            inizio = self._angoli[0] + i * 120
+            t.itemconfigure(alone, start=inizio, extent=78 * montaggio, outline=alone_anelli)
+            t.itemconfigure(arco, start=inizio, extent=78 * montaggio, outline=acceso)
+        for i, arco in enumerate(self.anelli_b):
+            t.itemconfigure(arco, start=self._angoli[1] + i * 60, extent=34 * montaggio,
+                            outline=mescola(c["sfondo"], colore, luce * 0.7))
+        forza_reattore = 0.55 + 0.45 * max(respiro * luce, self._livello)
+        t.itemconfigure(self.reattore[0], outline=mescola(c["sfondo"], colore, 0.12 + 0.1 * forza_reattore))
+        t.itemconfigure(self.reattore[1], outline=mescola(c["sfondo"], colore, forza_reattore))
         # L'alone del nucleo: cerchi sempre più chiari verso il centro.
         forza = 0.35 + 0.35 * respiro * luce + 0.3 * self._livello
         for i, alone in enumerate(self.alone):
             t.itemconfigure(alone, fill=mescola(c["sfondo"], colore, forza * (0.18 + i * 0.17)))
         t.itemconfigure(self.nucleo, fill=mescola(colore, "#ffffff", 0.35 + 0.5 * forza))
-        # Le barre della voce intorno al nucleo.
+        self._barre(adesso, dt, colore)
+        self._onda(adesso, colore)
+        if self._gioco and self._stato == "riposo":
+            scritta = "MODALITÀ GIOCO"
+        t.itemconfigure(self.scritta_stato, text="   ".join(" ".join(p) for p in scritta.split()), fill=colore)
+        ora = datetime.now()
+        t.itemconfigure(self.orologio, text=f"{ora:%H:%M}")
+        x, y = self._posizione_orologio
+        t.coords(self.secondi, x + self.font["orologio"].measure(f"{ora:%H:%M}") + 6,
+                 y + (self.font["orologio"].metrics("ascent") - self.font["secondi"].metrics("ascent")))
+        t.itemconfigure(self.secondi, text=f"{ora:%S}")
+        t.itemconfigure(self.data, text=f"{GIORNI[ora.weekday()]} {ora.day} {MESI[ora.month - 1]} {ora.year}")
+        self._spegni_testi(adesso)
+
+    def _barre(self, adesso, dt, colore):
+        """Le barre della voce intorno al nucleo."""
+        t, c = self.tela, COLORI
         r, cx, cy = self.raggio, self.cx, self.cy
         for i, barra in enumerate(self.barre):
             obiettivo = self._livello * (0.35 + 0.65 * abs(math.sin(i * 0.7 + adesso * 7.3) *
@@ -536,14 +684,28 @@ class Hud:
             t.coords(barra, cx + math.cos(angolo) * r0, cy + math.sin(angolo) * r0, cx + math.cos(angolo) * r1,
                      cy + math.sin(angolo) * r1)
             t.itemconfigure(barra, state="normal", fill=mescola(c["sfondo"], colore, 0.5 + 0.5 * altezza))
-        if self._gioco and self._stato == "riposo":
-            scritta = "MODALITÀ GIOCO"
-        t.itemconfigure(self.scritta_stato, text="   ".join(" ".join(p) for p in scritta.split()), fill=colore)
-        # Ora e data, una volta al secondo basta, ma costa poco.
-        ora = datetime.now()
-        t.itemconfigure(self.orologio, text=f"{ora:%H:%M:%S}")
-        t.itemconfigure(self.data, text=f"{GIORNI[ora.weekday()]} {ora.day} {MESI[ora.month - 1]} {ora.year}")
-        # I sottotitoli si spengono piano quando nessuno parla più.
+
+    def _onda(self, adesso, colore):
+        """La linea della voce sotto il reattore: quasi piatta quando tace, viva quando ascolta o parla."""
+        t, c = self.tela, COLORI
+        r, cx, y = self.raggio, self.cx, self.y_onda
+        vivacita = 0.05 + (0.25 if self._stato == "ascolto" else 0.0) + 0.95 * self._livello
+        ampiezza = r * 0.09 * vivacita
+        punti = []
+        for i in range(PUNTI_ONDA):
+            quota = i / (PUNTI_ONDA - 1)
+            busta = math.sin(math.pi * quota) ** 1.5  # alle estremità la linea si posa
+            onda = (math.sin(quota * 23 + adesso * 9.1) * 0.55 + math.sin(quota * 41 - adesso * 13.7) * 0.3
+                    + math.sin(quota * 7 + adesso * 4.3) * 0.35)
+            punti += [cx - r * 0.85 + quota * r * 1.7, y - ampiezza * busta * onda]
+        t.coords(self.onda[0], *punti)
+        t.coords(self.onda[1], *punti)
+        t.itemconfigure(self.onda[0], fill=mescola(c["sfondo"], colore, 0.12 + 0.25 * min(1.0, vivacita)))
+        t.itemconfigure(self.onda[1], fill=mescola(c["sfondo"], colore, 0.45 + 0.55 * min(1.0, vivacita)))
+
+    def _spegni_testi(self, adesso):
+        """I sottotitoli si spengono piano quando nessuno parla più; le informazioni dopo qualche secondo."""
+        t, c = self.tela, COLORI
         testo, tipo, quando = self._sottotitolo
         if testo and self._stato not in ("parla", "pensa"):
             passati = adesso - quando

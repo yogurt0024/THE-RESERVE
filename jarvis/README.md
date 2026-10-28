@@ -94,6 +94,7 @@ Niente chat: c'è solo Jarvis.
 
 - **Al centro il reattore**: gira piano quando aspetta, si accende quando ti ascolta, accelera quando pensa e pulsa
   con la voce quando parla. In modalità gioco diventa arancione; quando ha un avviso lampeggia in giallo.
+- **La linea della voce**, sotto il reattore: quasi piatta quando tace, si muove quando ti ascolta e quando parla.
 - **Sotto, i sottotitoli**: quello che hai chiesto e quello che risponde. Dopo un po' si spengono da soli.
 - **Intorno**: in alto l'ora e il meteo della tua città; a sinistra lo stato del PC (processore, memoria, scheda
   video, disco); a destra cosa c'è in programma (compiti in background, promemoria e impegni del calendario).
@@ -535,6 +536,10 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
 - **"La voce non funziona" o "Non posso ascoltare"**: il messaggio dice cosa manca. Di solito basta avviare
   con `py -3.12 jarvis.py` dopo aver installato le librerie (punto 5 dell'installazione). Se dice che Windows
   blocca una libreria, prova un'altra voce con `py -3.12 prova_voci.py`.
+- **Parla con un'altra voce dopo aver scaricato Jarvis di nuovo**: all'avvio Jarvis cerca da solo la voce che avevi
+  scelto nelle altre copie di Jarvis sul PC (in Download, sul Desktop, in Documenti) e, se ha la chiave, nella
+  cronologia del tuo account ElevenLabs; quando la trova te lo dice e torna a usarla. Puoi chiederglielo anche con
+  `/voce elevenlabs`.
 - **La voce di ElevenLabs non parla**: il messaggio nella finestra dice perché (chiave, caratteri finiti,
   internet). Intanto Jarvis parla con la voce di riserva. Per rifare la voce: `py -3.12 prova_voci.py`.
 - **Capisce male alcune parole**: lancia `py -3.12 prova_ascolto.py` e rispondi **s** al confronto. Dici tre

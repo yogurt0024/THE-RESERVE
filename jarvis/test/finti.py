@@ -259,6 +259,13 @@ class FintoElevenLabs(BaseHTTPRequestHandler):
             return self._errore(401, "invalid_api_key")
         if self.path == "/v1/voices":
             return self._rispondi(200, {"voices": self.VOCI})
+        if self.path.startswith("/v1/history"):  # le prove fatte con prova_voci.py e la conferma della scelta
+            return self._rispondi(200, {"history": [
+                {"voice_id": "bruno", "voice_name": "Bruno", "date_unix": 100,
+                 "text": "Buonasera, signore. Sono Jarvis, e tutti i sistemi sono operativi."},
+                {"voice_id": "giorgio", "voice_name": "Giorgio", "date_unix": 200,
+                 "text": "Eccomi, signore. Da questo momento parlerò con questa voce."},
+                {"voice_id": "anna", "voice_name": "Anna", "date_unix": 300, "text": "Una prova sul sito."}]})
         self._rispondi(200, {"tier": piano, "character_count": 1200, "character_limit": 10000})
 
     def do_POST(self):
