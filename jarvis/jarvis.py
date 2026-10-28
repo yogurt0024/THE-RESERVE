@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import iniziativa
 import notifiche
 import voce_elevenlabs
 from cervello import Assistente, ErroreOllama, carica_config
@@ -79,6 +80,8 @@ def terminale(config):
         raise SystemExit(f"Errore: {e}")
     print(assistente.stato())
     print("Scrivi una domanda, oppure /aiuto per i comandi.\n")
+    sorvegliante = iniziativa.Sorvegliante(config, avvisa=avvisa, in_gioco=lambda: assistente.modalita_gioco)
+    sorvegliante.avvia()
 
     while True:
         try:
@@ -101,6 +104,7 @@ def terminale(config):
         mostra(assistente.gestisci(domanda), nome)
 
     print(f"{nome}: Arrivederci!")
+    sorvegliante.chiudi()
     assistente.chiudi()
 
 

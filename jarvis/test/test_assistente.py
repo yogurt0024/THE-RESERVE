@@ -207,6 +207,25 @@ class TestModelloLocale(Base):
             _, _, eventi = self.chiedi(self.jarvis(), "/aggiorna")
         self.assertNotIn("riavvia", eventi)
 
+    def test_briefing_e_promemoria(self):
+        import promemoria
+
+        with mock.patch.object(promemoria, "FILE_PROMEMORIA", self.cartella / "promemoria.json"):
+            promemoria.aggiungi("tra 1 minuto", "chiamare la nonna")
+            j = self.jarvis(citta="Cagliari")
+            testo, avvisi, _ = self.chiedi(j, "Jarvis, com'è la mia giornata?")
+            self.assertEqual(avvisi, ["Controllo il meteo di Cagliari...", "Leggo le ultime notizie..."])
+            domanda = finti.FintoOllama.richieste[-1]["messages"][-1]["content"]
+            self.assertTrue(domanda.startswith("Fammi il briefing." + cervello.SEPARATORE_DATI))
+            for atteso in ("Meteo di Cagliari", "chiamare la nonna", "Esce il nuovo aggiornamento di Minecraft",
+                           cervello.ISTRUZIONI_BRIEFING):
+                self.assertIn(atteso, domanda)
+            self.assertNotIn("tools", finti.FintoOllama.richieste[-1])  # i dati li ha già raccolti Jarvis
+            _, avvisi, _ = self.chiedi(j, "/promemoria")
+            self.assertTrue(avvisi[0].startswith("Promemoria:\n1. oggi alle "))
+            _, avvisi, _ = self.chiedi(j, "/promemoria cancella 1")
+            self.assertEqual(avvisi, ["Promemoria cancellato: chiamare la nonna."])
+
     def test_attenzione_senza_nome(self):
         j = self.jarvis()
         self.chiedi(j, "Che tempo fa a Cagliari?")

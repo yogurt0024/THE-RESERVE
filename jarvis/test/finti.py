@@ -169,7 +169,10 @@ class FintoClaude(BaseHTTPRequestHandler):
 
 
 def internet_finto(url, parametri=None):
-    """Sostituisce strumenti._scarica: dati meteo inventati per Cagliari."""
+    """Sostituisce strumenti._scarica: dati meteo inventati per Cagliari e due notizie."""
+    if "news.google" in url:
+        return ("<rss><channel><item><title>Esce il nuovo aggiornamento di Minecraft</title></item>"
+                "<item><title>Sole in tutta la Sardegna</title></item></channel></rss>").encode()
     if "geocoding" in url:
         return json.dumps({"results": [{"name": "Cagliari", "latitude": 39.2, "longitude": 9.1,
                                         "admin1": "Sardegna", "country": "Italia"}]}).encode()

@@ -15,6 +15,7 @@ from pathlib import Path
 
 import aggiorna
 import cervello_claude
+import promemoria
 import strumenti
 from strumenti import ErroreStrumento
 
@@ -42,6 +43,10 @@ CONFIG_PREDEFINITA = {
     "modello_ascolto": "parakeet",
     "microfono": "",
     "controlla_aggiornamenti": True,
+    "briefing": True,
+    "ora_briefing": "07:30",
+    "avvisi_pc": True,
+    "consigli_pausa": True,
     "attenzione": "normale",
     "attenzione_in_gioco": False,
     "emozione_voce": 0.6,
@@ -76,6 +81,8 @@ AIUTO = """Comandi:
 /apri <programma o sito> — per esempio /apri blocco note oppure /apri youtube.com
 /calcola <conto> — per esempio /calcola (12+3)*2
 /timer <minuti> [messaggio] — per esempio /timer 10 pasta
+/promemoria — i promemoria in attesa (/promemoria cancella 2 per toglierne uno)
+/briefing — il briefing: meteo, promemoria, notizie e consigli per la giornata
 /sistema — diagnostica del PC (memoria, disco, scheda video)
 /chiamami <appellativo> — come vuoi essere chiamato (vuoto: nessun appellativo)
 /tu oppure /lei — se Jarvis ti dà del tu o del lei
@@ -147,6 +154,13 @@ Rispondi solo con il JSON richiesto."""
 
 SCHEMA_ATTENZIONE = {"type": "object", "properties": {
     "decisione": {"type": "string", "enum": ["rivolta", "bisogno", "ignora"]}}, "required": ["decisione"]}
+
+
+ISTRUZIONI_BRIEFING = (
+    "Fai il briefing come farebbe Jarvis, da ascoltare: saluta in base all'ora, poi in quattro-sei frasi brevi "
+    "di' il tempo di oggi, gli impegni e i promemoria, le notizie principali in una frase, e un consiglio solo se "
+    "c'è un motivo concreto (la pioggia, una cosa da ricordare oggi o domani tra quelle in memoria). Niente elenchi."
+)
 
 
 ISTRUZIONI_COMPITO = (
@@ -392,7 +406,7 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
             + ("ricerche sul web, " if config["internet"] and modello.startswith("claude") else "")
             + ("meteo, Wikipedia, notizie, " if config["internet"] else "")
             + "aprire siti, aprire ricerche nel browser, aprire programmi, calcoli esatti, timer, "
-            "diagnostica del PC, volume e musica. "
+            "promemoria con data e ora, diagnostica del PC, volume e musica. "
             "Usali quando servono, invece di inventare dati aggiornati o fare conti a mente."
         )
     else:
@@ -478,6 +492,10 @@ class Assistente:
         self._aggiorna_frase = re.compile(
             inizio + r"(?:aggiornati|aggiorna(?: te stesso| il programma| jarvis)?|(?:installa|scarica) (?:gli )?"
             r"aggiornamenti|fai l'aggiornamento)[\s.!]*$", re.IGNORECASE)
+        self._briefing_frase = re.compile(
+            inizio + r"(?:(?:(?:fammi|dammi) )?(?:il )?briefing(?: del mattino| di oggi)?|com'è la (?:mia )?giornata"
+            r"(?: oggi)?|cosa (?:c'è|ho) (?:in programma )?oggi|qual è il programma di oggi)[\s?.!]*$",
+            re.IGNORECASE)
         self.acceso_da = time.monotonic()
         self.voce_attiva = False  # la finestra lo mette a True quando Jarvis può sentire e parlare
         self.modalita_gioco = False
@@ -690,6 +708,10 @@ class Assistente:
         if self._aggiorna_frase.match(testo):
             yield from self._aggiorna(testo)
             return
+        if self._briefing_frase.match(testo):
+            domanda = yield from self._briefing()
+            yield from self._chiedi(domanda, stop, con_strumenti=False, a_voce=a_voce)
+            return
         ora_o_data = self._ora_o_data(testo)
         if ora_o_data:  # non serve chiederlo al modello: si risponde subito e senza sbagliare
             yield from self._risposta_fissa(testo, ora_o_data)
@@ -752,6 +774,30 @@ class Assistente:
             yield from self._risposta_fissa(domanda, risposta)
         if cambiati:
             yield ("riavvia",)
+
+    def _briefing(self):
+        """Raccoglie meteo, promemoria, notizie e compiti: il modello li racconta come un briefing."""
+        adesso = datetime.now()
+        dati = [f"Oggi è {strumenti.data_italiana(adesso)} e sono le {adesso:%H:%M}."]
+        if self.config["internet"] and self.config["citta"]:
+            yield ("info", strumenti.descrivi("meteo", {"citta": self.config["citta"]}))
+            try:
+                dati.append(strumenti.meteo(self.config["citta"]))
+            except ErroreStrumento as e:
+                dati.append(f"Il meteo non è disponibile ({e}).")
+        oggi = [(q, m) for q, m in promemoria.in_attesa(adesso) if q.date() == adesso.date()]
+        dati.append("Promemoria di oggi: " + "; ".join(f"alle {q.hour}:{q.minute:02d} {m}" for q, m in oggi)
+                    if oggi else "Nessun promemoria per oggi.")
+        if self.config["internet"]:
+            yield ("info", strumenti.descrivi("notizie", {}))
+            try:
+                dati.append("\n".join(strumenti.notizie("").splitlines()[:6]))
+            except ErroreStrumento:
+                pass
+        attivi = self.compiti_attivi()
+        if attivi:
+            dati.append("Compiti in background ancora in corso: " + "; ".join(c.descrizione for c in attivi))
+        return "Fammi il briefing." + SEPARATORE_DATI + "\n\n".join(dati) + "\n\n" + ISTRUZIONI_BRIEFING
 
     def _ora_o_data(self, testo):
         adesso = datetime.now()
@@ -912,6 +958,14 @@ class Assistente:
                     yield ("info", f"Cervello {argomento}: {spiegazione}{problema}{avviso}")
             elif nome == "aggiorna":
                 yield from self._aggiorna()
+            elif nome == "briefing":
+                return (yield from self._briefing())
+            elif nome == "promemoria":
+                parole = argomento.split()
+                if parole[:1] == ["cancella"] and len(parole) == 2:
+                    yield ("info", promemoria.cancella(parole[1]))
+                else:
+                    yield ("info", promemoria.descrivi_elenco())
             elif nome == "gioco":
                 yield ("info", self.imposta_modalita_gioco(not self.modalita_gioco))
             elif nome in ("voce", "ascolto"):
@@ -949,7 +1003,7 @@ class Assistente:
                 yield ("info", strumenti.timer(minuti, messaggio, self.avvisa))
             else:
                 yield ("info", f"Comando sconosciuto: /{nome}. Scrivi /aiuto per l'elenco.")
-        except ErroreStrumento as e:
+        except (ErroreStrumento, promemoria.ErrorePromemoria) as e:
             yield ("info", f"Non ci sono riuscito: {e}")
         return None
 

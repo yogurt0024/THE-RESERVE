@@ -18,6 +18,7 @@ from tkinter import messagebox, simpledialog
 
 import aggiorna
 import ascolto
+import iniziativa
 import notifiche
 import scarica
 import voce
@@ -65,6 +66,9 @@ class Finestra:
         # Voce e orecchio: lavorano in background e parlano con la finestra attraverso la stessa coda.
         self.voce = voce.Voce(config, avvisa=lambda messaggio: self.eventi.put(("problema_voce", messaggio)),
                               al_cambio=lambda parla: self.eventi.put(("parlando", parla)))
+        self.sorvegliante = iniziativa.Sorvegliante(
+            config, avvisa=lambda messaggio: self.eventi.put(("avviso", messaggio)), proponi=self._proponi,
+            in_gioco=lambda: self.assistente.modalita_gioco)
         self.orecchio = self._nuovo_orecchio()
         self.orecchio_avviato = False
         self.stato_ascolto = ""
@@ -221,6 +225,7 @@ class Finestra:
             self.eventi.put(("errore_avvio", str(e)))
             return
         self.eventi.put(("pronto",))
+        self.sorvegliante.avvia()
         if self.config["controlla_aggiornamenti"] and aggiorna.c_e_un_aggiornamento():
             self.eventi.put(("info", "C'è una versione nuova di Jarvis: di' \"Jarvis, aggiornati\" oppure scrivi "
                                      "/aggiorna. I tuoi dati e le tue impostazioni restano come sono."))
@@ -291,7 +296,7 @@ class Finestra:
         self.domanda_a_voce = a_voce
         self.ultima_risposta = ""
         parla = self.config["parla"]
-        self.risposta_a_voce = not testo.startswith("/") and (parla == "sempre" or (parla == "a_voce" and a_voce))
+        self.risposta_a_voce = parla == "sempre" or (parla == "a_voce" and a_voce)
         if self.risposta_a_voce:
             self.voce.inizia()
         self._occupa(True)
@@ -586,6 +591,9 @@ class Finestra:
             self._avvia_orecchio()
         elif tipo == "comando_vocale":
             self._comando_vocale(evento[1])
+        elif tipo == "proponi":
+            if not self.occupato:
+                self._invia(evento[1], mostra=False, a_voce=True)
         elif tipo == "senza_nome":
             self._senza_nome(evento[1], evento[2])
         elif tipo == "decisione":
@@ -626,12 +634,25 @@ class Finestra:
             self._invia(testo, a_voce=True)
 
     def _avviso_a_voce(self, messaggio):
-        promemoria = messaggio.removeprefix("Timer: ").strip()
-        if promemoria == "tempo scaduto!":
-            return f"Il tempo è scaduto{self._t()}."
-        if promemoria != messaggio:
-            return f"Il timer è scaduto{self._t()}: {promemoria}"
+        ricordo = "Ti ricordo" if self.config["dai_del"] == "tu" else "Le ricordo"
+        if messaggio.startswith("Timer: "):
+            cosa = messaggio.removeprefix("Timer: ").strip()
+            if cosa == "tempo scaduto!":
+                return f"Il tempo è scaduto{self._t()}."
+            return f"Il timer è scaduto{self._t()}: {cosa}"
+        if messaggio.startswith("Promemoria: "):
+            return f"{ricordo}{self._t()}: {messaggio.removeprefix('Promemoria: ')}."
+        if messaggio.startswith("Promemoria (era per "):
+            quando, _, cosa = messaggio.removeprefix("Promemoria (era per ").partition("): ")
+            return f"Mentre ero spento è scaduto un promemoria, era per {quando}{self._t()}: {cosa}."
         return messaggio
+
+    def _proponi(self, comando):
+        """L'iniziativa chiede di fare qualcosa (per esempio il briefing): si fa solo se Jarvis è libero."""
+        if self.occupato or self.comando_in_attesa or self.parlando:
+            return False
+        self.eventi.put(("proponi", comando))
+        return True
 
     def _consiglio_python(self):
         if sys.version_info >= (3, 13) and not self.consigliato:
@@ -663,6 +684,7 @@ class Finestra:
         subprocess.Popen([sys.executable, jarvis], env=dict(os.environ, JARVIS_PYTHON_312="1"))
 
     def _chiudi(self):
+        self.sorvegliante.chiudi()
         self.stop.set()
         self.voce.zitto()
         self.orecchio.chiudi()

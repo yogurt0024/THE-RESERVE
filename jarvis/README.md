@@ -18,6 +18,8 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 - **Lavora in background**: i lavori lunghi li svolge mentre tu fai altro, e quando ha finito te lo dice a voce
   e con una notifica di Windows (vedi [Compiti in background](#compiti-in-background)).
 - **Modalità gioco**: "Jarvis, modalità gioco" e la scheda video resta tutta al gioco.
+- **Prende l'iniziativa**: promemoria con data e ora, briefing del mattino, avvisi se il PC ha problemi e
+  consigli di pausa (vedi [Jarvis prende l'iniziativa](#jarvis-prende-liniziativa)).
 - **Ragionamento profondo**: per le domande difficili pensa prima di rispondere (più lento, più preciso).
 - **Sa cosa sa fare**: chiedigli "cosa sai fare?" o "quali sono i tuoi limiti?".
 - **Due cervelli sul tuo PC**: uno veloce per tutto il resto e uno grande per le domande difficili,
@@ -101,6 +103,8 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/calcola <conto>`            | per esempio `/calcola (12+3)*2`                     |
 | `/timer <minuti> [messaggio]` | per esempio `/timer 10 pasta`                       |
 | `/sistema`                    | diagnostica del PC (memoria, disco, scheda video)   |
+| `/promemoria`                 | i promemoria in attesa (`/promemoria cancella 2` ne toglie uno) |
+| `/briefing`                   | meteo, promemoria, notizie e consigli per la giornata |
 | `/chiamami <appellativo>`     | come vuoi essere chiamato (`/chiamami` da solo: nessun appellativo) |
 | `/tu` oppure `/lei`           | se Jarvis ti dà del tu o del lei                    |
 | `/ricorda <cosa>`             | salva un'informazione nella memoria permanente      |
@@ -141,6 +145,11 @@ Apri `config.json` con il Blocco note:
 | `modello_grande`        | il cervello grande per le domande difficili; vuoto = nessuno   |
 | `ragionamento`          | `true` per avere il ragionamento profondo già attivo all'avvio  |
 | `compiti_in_background` | `false` per aspettare la risposta del cervello grande invece di continuare a parlare |
+| `briefing`              | `false` per non fare il briefing del mattino da solo            |
+| `ora_briefing`          | da che ora del mattino fare il briefing (predefinito `"07:30"`) |
+| `avvisi_pc`             | `false` per non avere avvisi su batteria, disco, temperatura e memoria |
+| `consigli_pausa`        | `false` per non avere consigli di pausa                         |
+| `controlla_aggiornamenti` | `false` per non controllare all'avvio se c'è una versione nuova |
 | `ascolto`               | `false` per tenere spento il microfono                          |
 | `parla`                 | `"sempre"`, `"a_voce"` (risponde a voce solo quando gli parli) oppure `"mai"` |
 | `voce`                  | `elevenlabs`, `espressiva`, `riccardo`, `nicola`, `diego` o `giuseppe` (la sceglie `prova_voci.py`) |
@@ -286,6 +295,22 @@ voci maschili, e `effetto_voce` in `config.json` aggiunge un effetto in stile fi
 - La prima volta che si avvia con la voce, Jarvis scarica i modelli che gli servono (circa 700 MB in tutto):
   nella riga in alto a destra vedi a che punto è.
 - Il modello che capisce la voce lavora sul processore, così la scheda video resta libera.
+
+## Jarvis prende l'iniziativa
+
+- **Promemoria con data e ora**: "Jarvis, ricordami di chiamare la nonna domani alle 18", "...venerdì alle 9 e
+  mezza", "...tra due ore". All'ora giusta te lo dice a voce e con una notifica. Restano anche se spegni il PC:
+  quelli scaduti mentre era spento te li dice appena lo riaccendi. `/promemoria` li elenca,
+  `/promemoria cancella 2` ne toglie uno (oppure chiedilo a voce).
+- **Briefing del mattino**: la prima volta che lo accendi la mattina (dalle 7:30 a mezzogiorno) ti racconta il
+  meteo, i promemoria della giornata, le notizie principali e, se serve, un consiglio preso dalle cose che gli hai
+  chiesto di ricordare. Puoi chiederlo quando vuoi: "Jarvis, com'è la mia giornata?" oppure `/briefing`.
+- **Avvisi sul PC**: batteria sotto il 20%, disco quasi pieno, scheda video sopra gli 85 gradi, memoria piena.
+  Lo dice una volta sola, poi aspetta un po' prima di ripeterlo.
+- **Pause**: dopo due ore di computer senza staccare ti consiglia una pausa (non in modalità gioco). Se ti alzi
+  per almeno cinque minuti, il conto riparte da zero.
+
+Si regolano in `config.json`: `briefing`, `ora_briefing`, `avvisi_pc`, `consigli_pausa`.
 
 ## Compiti in background
 

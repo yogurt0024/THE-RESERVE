@@ -23,6 +23,8 @@ import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
+import promemoria
+
 AGENTE = "Jarvis/2.0 (assistente personale; https://github.com/yogurt0024/THE-RESERVE)"
 
 GIORNI = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
@@ -454,6 +456,16 @@ def schemi(config):
                 {"minuti": {"type": "number", "description": "Dopo quanti minuti suonare (0.5 = 30 secondi)"},
                  "messaggio": _testo("Cosa ricordare all'utente allo scadere (facoltativo)")},
                 ["minuti"]),
+        _schema("promemoria",
+                "Salva un promemoria con data e ora: all'ora giusta Jarvis lo dice all'utente, anche dopo un "
+                "riavvio del PC. Usalo per \"ricordami di...\" con un momento preciso.",
+                {"quando": _testo("Quando, come lo direbbe l'utente: \"domani alle 18\", \"venerdì 9:30\", "
+                                  "\"tra 2 ore\", \"3 novembre alle 10\""),
+                 "messaggio": _testo("Cosa ricordare, per esempio: chiamare la nonna")},
+                ["quando", "messaggio"]),
+        _schema("elenco_promemoria", "Elenca i promemoria in attesa, con il loro numero.", {}, []),
+        _schema("cancella_promemoria", "Cancella un promemoria in attesa.",
+                {"numero": {"type": "number", "description": "Il numero del promemoria nell'elenco"}}, ["numero"]),
         _schema("diagnostica",
                 "Controlla lo stato del PC: memoria RAM, disco, scheda video (memoria e temperatura), "
                 "batteria e da quanto tempo è acceso.",
@@ -506,6 +518,9 @@ def descrivi(nome, argomenti):
         "apri_programma": f"Apro {a.get('nome', '')}...",
         "calcola": f"Calcolo {a.get('espressione', '')}...",
         "timer": f"Imposto un timer di {durata}...",
+        "promemoria": f"Salvo il promemoria ({a.get('quando', '')})...",
+        "elenco_promemoria": "Guardo i promemoria...",
+        "cancella_promemoria": "Cancello il promemoria...",
         "diagnostica": "Eseguo la diagnostica del sistema...",
         "multimedia": "Comando a volume e musica...",
     }
@@ -533,12 +548,18 @@ def esegui(nome, argomenti, config, avvisa):
             return calcola(str(argomenti.get("espressione", "")))
         if nome == "timer":
             return timer(argomenti.get("minuti"), argomenti.get("messaggio"), avvisa)
+        if nome == "promemoria":
+            return promemoria.aggiungi(argomenti.get("quando"), argomenti.get("messaggio"))
+        if nome == "elenco_promemoria":
+            return promemoria.descrivi_elenco()
+        if nome == "cancella_promemoria":
+            return promemoria.cancella(argomenti.get("numero"))
         if nome == "diagnostica":
             return diagnostica()
         if nome == "multimedia":
             return multimedia(argomenti.get("azione"))
         raise ErroreStrumento(f"lo strumento {nome} non esiste.")
-    except ErroreStrumento as e:
+    except (ErroreStrumento, promemoria.ErrorePromemoria) as e:
         return f"Errore: {e}"
     except Exception as e:  # una risposta imprevista da un sito non deve far cadere Jarvis
         return f"Errore: qualcosa è andato storto ({e})."
