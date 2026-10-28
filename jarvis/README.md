@@ -147,7 +147,7 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/annulla <numero>`           | ferma un compito in background                      |
 | `/gioco`                      | accende o spegne la modalità gioco                  |
 | `/ascolto`                    | accende o spegne il microfono                       |
-| `/voce [nome]`                | accende o spegne la voce, oppure la cambia (`/voce nicola`) |
+| `/voce [nome]`                | accende o spegne la voce, oppure la cambia (`/voce nicola`); `/voce prova` fa sentire la voce in uso |
 | `/pensa`                      | attiva o spegne il ragionamento profondo            |
 | `/cervello <modalità>`        | `locale`, `ibrido` o `claude` (vedi sotto)          |
 | `/chiave`                     | inserisci la chiave API di Claude                   |
@@ -193,7 +193,7 @@ Apri `config.json` con il Blocco note:
 | `voce_di_riserva`       | la voce sul PC da usare quando ElevenLabs non risponde; vuoto = nessuna |
 | `emozione_voce`         | per la voce espressiva: da `0` (calma) a `1` (teatrale)          |
 | `voce_riferimento`      | per la voce espressiva: un file WAV con la voce da imitare (vuoto = Nicola) |
-| `effetto_voce`          | quanto effetto "intelligenza artificiale": da `0` (nessuno) a `1`; predefinito `0.6` |
+| `effetto_voce`          | quanto effetto "intelligenza artificiale" per le voci sul PC: da `0` (nessuno) a `1`; predefinito `0.6` (la voce di ElevenLabs resta sempre com'è) |
 | `velocita_voce`         | `1` è normale; `0.9` più lenta, `1.1` più veloce                |
 | `limite_voce`           | quanti caratteri di una risposta legge al massimo: il resto è nella cronologia (F2) |
 | `modello_ascolto`       | `parakeet` (veloce), `canary` (sempre in italiano) o `whisper` (più lento); li confronta `prova_ascolto.py` |
@@ -541,7 +541,10 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
   cronologia del tuo account ElevenLabs; quando la trova te lo dice e torna a usarla. Puoi chiederglielo anche con
   `/voce elevenlabs`.
 - **La voce di ElevenLabs non parla**: il messaggio nella finestra dice perché (chiave, caratteri finiti,
-  internet). Intanto Jarvis parla con la voce di riserva. Per rifare la voce: `py -3.12 prova_voci.py`.
+  internet). Intanto Jarvis parla con la voce di riserva, e sotto il reattore c'è scritto "voce di riserva".
+  Per rifare la voce: `py -3.12 prova_voci.py`.
+- **La voce suona diversa da quando l'hai scelta**: scrivi `/voce prova`. Jarvis dice la stessa frase delle prove
+  di `prova_voci.py` e scrive quale voce sta usando.
 - **Capisce male alcune parole**: lancia `py -3.12 prova_ascolto.py` e rispondi **s** al confronto. Dici tre
   frasi, i modelli le trascrivono tutti, e tieni quello che sbaglia meno (Canary ascolta sempre in italiano).
 - **Non mi sente**: prova `py -3.12 prova_ascolto.py`. Se usa il microfono sbagliato, scrivi una parte del

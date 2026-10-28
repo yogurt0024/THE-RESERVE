@@ -103,6 +103,17 @@ def dividi_frasi(testo):
     return [f.strip() for f in _FINE_FRASE.split(testo) if f.strip()]
 
 
+def raggruppa(frasi, minimo):
+    """Unisce le frasi in pezzi di almeno `minimo` caratteri (l'ultimo può essere più corto)."""
+    pezzi, pezzo = [], ""
+    for frase in frasi:
+        pezzo = f"{pezzo} {frase}".strip()
+        if len(pezzo) >= minimo:
+            pezzi.append(pezzo)
+            pezzo = ""
+    return pezzi + ([pezzo] if pezzo else [])
+
+
 def effetto_jarvis(audio, frequenza, intensita=0.6):
     """Il tocco "intelligenza artificiale" dei film: voce più asciutta e luminosa, un leggero riflesso
     metallico e l'eco di una stanza. Con intensità 0 la voce resta com'è."""
@@ -453,6 +464,12 @@ def _riproduci_con_sounddevice(audio, frequenza, interrompi):
             return
 
 
+# Quanti caratteri chiedere insieme a ogni voce. ElevenLabs dà l'intonazione giusta solo se riceve frasi intere
+# e collegate: a pezzetti ogni frammento ripartirebbe da capo e la voce suonerebbe a scatti. Le voci sul PC
+# invece vanno bene frase per frase, e così cominciano a parlare prima.
+PEZZO_MINIMO = {"elevenlabs": 140}
+
+
 class Voce:
     """Legge il testo ad alta voce in background: le frasi si mettono in fila e si possono interrompere.
 
@@ -481,6 +498,7 @@ class Voce:
         self._in_fila = 0  # frasi messe in fila e non ancora finite di dire
         self._interrompi = threading.Event()
         self._risposta = ""  # l'ultimo pezzo della risposta, che può essere una frase a metà
+        self._pezzo = ""  # frasi intere della risposta, che aspettano di essere dette insieme
         self._detti = 0
         self._troncata = False
         self._zittita = False
@@ -494,6 +512,18 @@ class Voce:
     @property
     def sta_parlando(self):
         return self._in_fila > 0
+
+    @property
+    def in_riserva(self):
+        """True se in questo momento parla con la voce di riserva invece che con quella scelta."""
+        riserva = self.config.get("voce_di_riserva", VOCE_PREDEFINITA)
+        if not riserva or riserva == self.nome:
+            return False
+        return time.monotonic() < self._usa_riserva_fino or self._fallita == self.nome
+
+    @property
+    def _minimo(self):
+        return PEZZO_MINIMO.get(VOCI.get(self.nome, {}).get("motore"), 0)
 
     def prepara(self, avanzamento=None, riprova=True):
         """Scarica (la prima volta) e carica la voce. Restituisce l'errore, oppure "" se è pronta.
@@ -520,17 +550,21 @@ class Voce:
 
     def di(self, testo, limite=0):
         """Dice un testo intero, per esempio un avviso. Se supera `limite` caratteri, ne dice solo l'inizio."""
-        detti = 0
+        detti, da_dire, resto = 0, [], False
         for frase in dividi_frasi(testo):
             if limite and detti and detti + len(frase) > limite:
-                self._metti_in_fila(self._frase_del_resto())
+                resto = True
                 break
             detti += len(frase)
-            self._metti_in_fila(frase)
+            da_dire.append(frase)
+        for pezzo in raggruppa(da_dire, self._minimo):
+            self._metti_in_fila(pezzo)
+        if resto:
+            self._metti_in_fila(self._frase_del_resto())
 
     def inizia(self):
         """Comincia una nuova risposta (quella di prima, se c'era, continua finché non finisce)."""
-        self._risposta, self._detti, self._troncata, self._zittita = "", 0, False, False
+        self._risposta, self._pezzo, self._detti, self._troncata, self._zittita = "", "", 0, False, False
 
     def aggiungi(self, pezzo):
         if self._troncata or self._zittita:
@@ -546,6 +580,9 @@ class Voce:
             return
         self._frase_della_risposta(self._risposta)
         self._risposta = ""
+        if self._pezzo:
+            self._metti_in_fila(self._pezzo)
+            self._pezzo = ""
         if self._troncata:
             self._metti_in_fila(self._frase_del_resto())
             self._troncata = False
@@ -556,6 +593,7 @@ class Voce:
             self._generazione += 1
             self._interrompi.set()
             self._zittita = True
+            self._pezzo = ""
         for coda in (self._da_dire, self._da_suonare):
             while True:
                 try:
@@ -573,7 +611,10 @@ class Voce:
             self._troncata = True
             return
         self._detti += len(frase)
-        self._metti_in_fila(frase)
+        self._pezzo = f"{self._pezzo} {frase}".strip()
+        if len(self._pezzo) >= self._minimo:
+            self._metti_in_fila(self._pezzo)
+            self._pezzo = ""
 
     def _frase_del_resto(self):
         titolo = self.config.get("come_chiamarmi", "")
@@ -621,16 +662,29 @@ class Voce:
         principale = None
         if time.monotonic() >= self._usa_riserva_fino and not self.prepara(riprova=False):
             principale = self._motore  # se la voce non si carica, l'ha già detto prepara()
-        for motore in (principale, self._riserva()):
-            if motore is None:
-                continue
+        if principale is not None:
+            errore = None
+            for tentativo in range(2):  # al primo errore (per esempio un attimo senza rete) si riprova subito
+                try:
+                    audio, frequenza = principale.sintetizza(testo)
+                except Exception as e:  # una frase che non si riesce a dire non deve fermare le altre
+                    errore = e
+                    if tentativo == 0:
+                        time.sleep(0.5)
+                    continue
+                # L'effetto "intelligenza artificiale" è per le voci sul PC: quella di ElevenLabs resta com'è,
+                # come quando l'hai scelta.
+                effetto = 0.0 if self._nome_motore == "elevenlabs" else float(self.config.get("effetto_voce", 0.6))
+                return effetto_jarvis(audio, frequenza, effetto), frequenza
+            self._segnala(f"non sono riuscito a dire una frase ({errore})")
+            self._usa_riserva_fino = time.monotonic() + 120  # per due minuti parla con l'altra voce
+        riserva = self._riserva()
+        if riserva is not None:
             try:
-                audio, frequenza = motore.sintetizza(testo)
-            except Exception as e:  # una frase che non si riesce a dire non deve fermare le altre
+                audio, frequenza = riserva.sintetizza(testo)
+            except Exception as e:
                 self._segnala(f"non sono riuscito a dire una frase ({e})")
-                if motore is principale:
-                    self._usa_riserva_fino = time.monotonic() + 300  # per cinque minuti parla con l'altra voce
-                continue
+                return None, None
             return effetto_jarvis(audio, frequenza, float(self.config.get("effetto_voce", 0.6))), frequenza
         return None, None
 

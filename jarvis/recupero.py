@@ -15,7 +15,9 @@ from pathlib import Path
 import voce_elevenlabs
 
 CARTELLA = Path(__file__).resolve().parent
-VOCI_PREDEFINITE = ("", "riccardo")  # le voci che ci sono se nessuno ne ha scelta una
+# Le voci con cui si cerca: quelle che ci sono se nessuno ne ha scelta una, ed "elevenlabs" senza la voce
+# (per esempio se in config.json si è scritto "elevenlabs" a mano).
+VOCI_PREDEFINITE = ("", "riccardo", "elevenlabs")
 DATI_DA_RECUPERARE = ("chiave_elevenlabs.txt", "memoria.json", "promemoria.json", "conversazione.json")
 IMPOSTAZIONI_VOCE = ("voce", "voce_elevenlabs", "modello_elevenlabs", "effetto_voce", "velocita_voce")
 

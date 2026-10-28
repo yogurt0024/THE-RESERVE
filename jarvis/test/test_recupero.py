@@ -104,6 +104,13 @@ class TestRecupero(unittest.TestCase):
         self.assertEqual(self.ritrova(), "")  # la voce di ElevenLabs è impostata: riccardo l'ha scelto l'utente
         self.assertEqual(self.salvate, {})
 
+    def test_elevenlabs_scritto_a_mano(self):
+        (self.qui / "dati").mkdir()
+        el.FILE_CHIAVE.write_text("chiave-gratis\n", encoding="utf-8")
+        self.config["voce"] = "elevenlabs"  # ma senza l'identificativo della voce
+        self.assertTrue(self.ritrova().startswith("Ho ritrovato su ElevenLabs la voce"))
+        self.assertEqual(self.config["voce_elevenlabs"], "giorgio")
+
     def test_niente_da_trovare(self):
         self.assertEqual(self.ritrova(), "")  # né altre copie, né chiave
         (self.qui / "dati").mkdir()

@@ -103,11 +103,38 @@ class TestElevenLabs(unittest.TestCase):
                 if not v.sta_parlando:
                     break
                 time.sleep(0.01)
-        self.assertEqual(suonati, [16000, 16000])  # ha parlato con la voce di riserva
+        self.assertEqual(suonati, [16000])  # ha parlato con la voce di riserva (le due frasi insieme)
         self.assertEqual(avvisi, ["La voce non funziona: non sono riuscito a dire una frase "
                                   "(hai finito i caratteri del mese su ElevenLabs)"])
-        # Per un po' non riprova ElevenLabs a ogni frase.
-        self.assertEqual(len([r for r in finti.FintoElevenLabs.richieste if "esaurita" in r["percorso"]]), 1)
+        self.assertTrue(v.in_riserva)
+        # Un secondo tentativo subito, poi per un po' non riprova ElevenLabs a ogni frase.
+        self.assertEqual(len([r for r in finti.FintoElevenLabs.richieste if "esaurita" in r["percorso"]]), 2)
+        v.di("Ancora una frase.")
+        for _ in range(200):
+            if not v.sta_parlando:
+                break
+            time.sleep(0.01)
+        self.assertEqual(len([r for r in finti.FintoElevenLabs.richieste if "esaurita" in r["percorso"]]), 2)
+
+    def test_come_quando_l_hai_scelta(self):
+        """Frasi intere e collegate, e la voce senza effetti: suona come nella prova di prova_voci.py."""
+        el.salva_chiave("chiave-buona")
+        suonati = []
+        v = voce.Voce({"voce": "elevenlabs", "voce_elevenlabs": "giorgio", "effetto_voce": 0.6},
+                      riproduci=lambda audio, frequenza, interrompi: suonati.append(len(audio)))
+        v.inizia()
+        for pezzo in ["Fatto, signore: da ora ", "so convertire le valute. ", "Me lo chieda quando vuole; ",
+                      "per esempio: quanto fanno 20 euro in dollari?"]:
+            v.aggiungi(pezzo)
+        v.finisci()
+        for _ in range(200):
+            if not v.sta_parlando:
+                break
+            time.sleep(0.01)
+        testi = [r["text"] for r in finti.FintoElevenLabs.richieste if r["percorso"].startswith("/v1/text-to")]
+        self.assertEqual(testi, ["Fatto, signore: da ora so convertire le valute. Me lo chieda quando vuole; per "
+                                 "esempio: quanto fanno 20 euro in dollari?"])
+        self.assertEqual(suonati, [10 * len(testi[0])])  # nessuna eco aggiunta: l'audio è quello di ElevenLabs
 
 
 if __name__ == "__main__":

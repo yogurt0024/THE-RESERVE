@@ -120,6 +120,8 @@ class Finestra:
         self.hud.imposta_gioco(self.assistente.modalita_gioco)
         self.hud.imposta_indicatore("gioco", self.assistente.modalita_gioco)
         parti = []
+        if self.voce.in_riserva:  # così si sa con che voce sta parlando
+            parti.append(f"voce di riserva ({self.config.get('voce_di_riserva', '')})")
         if self.stato_voce:
             parti.append(self.stato_voce)
         elif self.stato_ascolto and self.stato_ascolto != "in ascolto":
@@ -493,6 +495,14 @@ class Finestra:
     def _comando_voce(self, nome):
         if not nome:
             self._cambia_voce(self.config["parla"] == "mai")
+            return
+        if nome == "prova":  # la stessa frase delle prove di prova_voci.py, per confrontarle
+            frase = f"Buonasera{self._t()}. Sono {self.nome}, e tutti i sistemi sono operativi."
+            quale = self.config["voce"] + (" (voce di riserva: " + self.config.get("voce_di_riserva", "") + ")"
+                                           if self.voce.in_riserva else "")
+            self._info(f"Prova della voce in uso: {quale}.")
+            self._annuncia(frase)
+            self.voce.di(frase)
             return
         if nome not in voce.VOCI:
             elenco = "\n".join(f"- {n}: {v['descrizione']}" for n, v in voce.VOCI.items())
