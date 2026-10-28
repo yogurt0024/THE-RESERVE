@@ -12,12 +12,14 @@ import os
 import queue
 import re
 import threading
+import time
 import unicodedata
 import wave
 from pathlib import Path
 
 import scarica
 import tokenizzatore
+import voce_elevenlabs
 
 _PIPER = "rhasspy/piper-voices"
 _KOKORO = "https://github.com/thewh1teagle/kokoro-onnx/releases/download"
@@ -25,6 +27,10 @@ _CHATTERBOX = "onnx-community/chatterbox-multilingual-ONNX"
 
 VOCE_PREDEFINITA = "riccardo"
 VOCI = {
+    "elevenlabs": {
+        "motore": "elevenlabs",
+        "descrizione": "Jarvis su ElevenLabs: la più fluida e naturale, creata apposta per lui (via internet)",
+    },
     "espressiva": {
         "motore": "chatterbox", "cartella": "voce-espressiva",
         "descrizione": "Espressiva: recita con emozione, con il timbro di Nicola (Chatterbox, sul PC; scarica "
@@ -56,7 +62,8 @@ VOCI = {
         "descrizione": "Giuseppe: voce di Microsoft, molto naturale, ma il testo passa da internet",
     },
 }
-PACCHETTI = {"piper": "piper-tts", "kokoro": "kokoro-onnx", "edge": "edge-tts soundfile", "chatterbox": "onnxruntime"}
+PACCHETTI = {"piper": "piper-tts", "kokoro": "kokoro-onnx", "edge": "edge-tts soundfile", "chatterbox": "onnxruntime",
+             "elevenlabs": "numpy"}
 
 # Dove finisce una frase: dopo . ! ? … ; : seguiti da uno spazio, oppure a capo.
 _FINE_FRASE = re.compile(r"(?<=[.!?…;:])\s+|\n+")
@@ -407,7 +414,33 @@ def salva_wav(percorso, audio, frequenza):
         w.writeframes(dati)
 
 
-_MOTORI = {"piper": _Piper, "kokoro": _Kokoro, "edge": _Edge, "chatterbox": _Chatterbox}
+class _ElevenLabs:
+    """La voce creata per Jarvis su ElevenLabs (vedi voce_elevenlabs.py): fluida e naturale, ma via internet."""
+
+    def __init__(self, cartella, info, velocita, config):
+        import numpy  # noqa: F401  (serve per trasformare l'audio)
+
+        if not voce_elevenlabs.leggi_chiave():
+            raise ErroreVoce("manca la chiave di ElevenLabs: inseriscila con  py -3.12 prova_voci.py")
+        self._voce = (config.get("voce_elevenlabs") or "").strip()
+        if not self._voce:
+            raise ErroreVoce("la voce di Jarvis su ElevenLabs non c'è ancora: creala con  py -3.12 prova_voci.py")
+        self._modello = config.get("modello_elevenlabs") or voce_elevenlabs.MODELLO_PREDEFINITO
+        self._velocita = velocita
+        self._precedente, self._quando = "", 0.0
+
+    def sintetizza(self, testo):
+        # La frase detta subito prima aiuta ElevenLabs a continuare il discorso con l'intonazione giusta.
+        precedente = self._precedente if time.monotonic() - self._quando < 20 else ""
+        try:
+            audio = voce_elevenlabs.sintetizza(testo, self._voce, self._modello, self._velocita, precedente)
+        except voce_elevenlabs.ErroreElevenLabs as e:
+            raise ErroreVoce(str(e)) from None
+        self._precedente, self._quando = testo, time.monotonic()
+        return audio, voce_elevenlabs.FREQUENZA
+
+
+_MOTORI = {"piper": _Piper, "kokoro": _Kokoro, "edge": _Edge, "chatterbox": _Chatterbox, "elevenlabs": _ElevenLabs}
 
 
 def _riproduci_con_sounddevice(audio, frequenza, interrompi):
@@ -435,6 +468,9 @@ class Voce:
         self._motore = None
         self._nome_motore = None
         self._fallita = None  # la voce che non si è riusciti a caricare
+        self._riserva_motore = None  # una voce sul PC per quando quella scelta non risponde (internet, crediti)
+        self._riserva_provata = False
+        self._usa_riserva_fino = 0.0
         self.errore = ""
         self._errori_segnalati = set()
         self._carica_lucchetto = threading.Lock()
@@ -574,17 +610,42 @@ class Voce:
             generazione, testo = self._da_dire.get()
             audio = frequenza = None
             if generazione == self._generazione:
-                if not self.prepara(riprova=False):  # se la voce non si carica, l'ha già detto prepara()
-                    try:
-                        audio, frequenza = self._motore.sintetizza(testo)
-                        audio = effetto_jarvis(audio, frequenza, float(self.config.get("effetto_voce", 0.6)))
-                    except Exception as e:  # una frase che non si riesce a dire non deve fermare le altre
-                        audio = None
-                        self._segnala(f"non sono riuscito a dire una frase ({e})")
+                audio, frequenza = self._audio_della_frase(testo)
             if audio is None or generazione != self._generazione:
                 self._fatta()
             else:
                 self._da_suonare.put((generazione, audio, frequenza))
+
+    def _audio_della_frase(self, testo):
+        """La frase con la voce scelta; se non va (per esempio niente internet), con quella di riserva."""
+        principale = None
+        if time.monotonic() >= self._usa_riserva_fino and not self.prepara(riprova=False):
+            principale = self._motore  # se la voce non si carica, l'ha già detto prepara()
+        for motore in (principale, self._riserva()):
+            if motore is None:
+                continue
+            try:
+                audio, frequenza = motore.sintetizza(testo)
+            except Exception as e:  # una frase che non si riesce a dire non deve fermare le altre
+                self._segnala(f"non sono riuscito a dire una frase ({e})")
+                if motore is principale:
+                    self._usa_riserva_fino = time.monotonic() + 300  # per cinque minuti parla con l'altra voce
+                continue
+            return effetto_jarvis(audio, frequenza, float(self.config.get("effetto_voce", 0.6))), frequenza
+        return None, None
+
+    def _riserva(self):
+        nome = self.config.get("voce_di_riserva", VOCE_PREDEFINITA)
+        if not nome or nome == self.nome:
+            return None
+        if not self._riserva_provata:
+            self._riserva_provata = True
+            try:
+                self._riserva_motore = carica_motore(nome, float(self.config.get("velocita_voce", 1.0)),
+                                                     config=self.config)
+            except ErroreVoce:
+                self._riserva_motore = None
+        return self._riserva_motore
 
     def _suona(self):
         while True:

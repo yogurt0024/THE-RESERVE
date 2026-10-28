@@ -44,6 +44,9 @@ CONFIG_PREDEFINITA = {
     "attenzione_in_gioco": False,
     "emozione_voce": 0.6,
     "voce_riferimento": "",
+    "voce_elevenlabs": "",
+    "modello_elevenlabs": "eleven_multilingual_v2",
+    "voce_di_riserva": "riccardo",
     "modello_claude": "claude-opus-5-5",
     "sforzo_claude": "medium",
     "mostra_costi": True,
@@ -79,7 +82,7 @@ AIUTO = """Comandi:
 /dimentica <numero> — cancella un ricordo (/dimentica tutto li cancella tutti)
 /pensa — attiva o disattiva il ragionamento profondo
 /cervello locale, ibrido o claude — locale: tutto sul PC; ibrido: Claude per le cose difficili
-/chiave — inserisci la chiave API di Claude
+/chiave — inserisci la chiave API di Claude (/chiave elevenlabs per quella della voce)
 /costi — quanto hai speso con Claude
 /compiti — i compiti in background e a che punto sono
 /annulla <numero> — ferma un compito in background

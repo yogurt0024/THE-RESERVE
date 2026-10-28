@@ -12,6 +12,7 @@ import sys
 from pathlib import Path
 
 import notifiche
+import voce_elevenlabs
 from cervello import Assistente, ErroreOllama, carica_config
 
 
@@ -89,6 +90,10 @@ def terminale(config):
         if domanda.lower() == "/chiave":
             chiave = getpass.getpass("Incolla la chiave API di Claude (mentre la incolli non si vede): ")
             print(f"» {assistente.imposta_chiave(chiave)}\n")
+            continue
+        if domanda.lower() == "/chiave elevenlabs":
+            chiave = getpass.getpass("Incolla la chiave API di ElevenLabs (mentre la incolli non si vede): ")
+            print(f"» {voce_elevenlabs.salva_chiave(chiave)}\n")
             continue
         mostra(assistente.gestisci(domanda), nome)
 

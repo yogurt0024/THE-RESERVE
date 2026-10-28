@@ -7,7 +7,7 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 
 - **Ti sente e ti parla**: è sempre in ascolto, basta dire "Jarvis, ..." (vedi [Voce e ascolto](#voce-e-ascolto)).
   Capisce anche da solo quando parli con lui senza chiamarlo, e interviene se vede che ti serve aiuto.
-  Risponde con una voce espressiva che recita, e si interrompe se gli dici "Jarvis, basta".
+  Parla con una voce fluida creata apposta per lui, e si interrompe se gli dici "Jarvis, basta".
 - **Risponde alle domande** in una finestra in stile Jarvis (oppure nel Prompt dei comandi).
 - **Memoria permanente**: si ricorda quello che gli dici con "ricordati che..." e anche la conversazione,
   pure dopo averlo chiuso.
@@ -61,8 +61,8 @@ Se avevi già la prima versione di Jarvis, Python e Ollama sono già installati:
    ```
 
    - Il primo comando installa Python 3.12 accanto alla versione che hai già (se l'hai già fatto, saltalo).
-   - `prova_voci.py` ti fa sentire le voci e salva quella che scegli. La voce espressiva la senti con tre livelli
-     di emozione; la prima volta scarica circa 1,5 GB.
+   - `prova_voci.py` crea la voce di Jarvis su ElevenLabs (vedi [La voce di Jarvis](#la-voce-di-jarvis)), oppure
+     ti fa sentire le voci che funzionano sul PC, e salva quella che scegli.
    - `prova_ascolto.py` scarica il modello che capisce la voce (circa 700 MB, una volta sola) e scrive quello
      che sente dal microfono: prova a dire "Jarvis, che ore sono?". Si chiude con Ctrl+C.
 
@@ -105,6 +105,7 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/pensa`                      | attiva o spegne il ragionamento profondo            |
 | `/cervello <modalità>`        | `locale`, `ibrido` o `claude` (vedi sotto)          |
 | `/chiave`                     | inserisci la chiave API di Claude                   |
+| `/chiave elevenlabs`          | inserisci la chiave API di ElevenLabs (la voce)     |
 | `/costi`                      | quanto hai speso con Claude                         |
 | `/nuova`                      | nuova conversazione (la memoria permanente resta)   |
 | `/esci`                       | chiude Jarvis                                       |
@@ -132,7 +133,10 @@ Apri `config.json` con il Blocco note:
 | `compiti_in_background` | `false` per aspettare la risposta del cervello grande invece di continuare a parlare |
 | `ascolto`               | `false` per tenere spento il microfono                          |
 | `parla`                 | `"sempre"`, `"a_voce"` (risponde a voce solo quando gli parli) oppure `"mai"` |
-| `voce`                  | `espressiva`, `riccardo`, `nicola`, `diego` o `giuseppe` (le sceglie `prova_voci.py`) |
+| `voce`                  | `elevenlabs`, `espressiva`, `riccardo`, `nicola`, `diego` o `giuseppe` (la sceglie `prova_voci.py`) |
+| `voce_elevenlabs`       | l'identificativo della voce di Jarvis su ElevenLabs (lo scrive `prova_voci.py`) |
+| `modello_elevenlabs`    | `eleven_multilingual_v2` (predefinito), `eleven_flash_v2_5` o `eleven_v3` |
+| `voce_di_riserva`       | la voce sul PC da usare quando ElevenLabs non risponde; vuoto = nessuna |
 | `emozione_voce`         | per la voce espressiva: da `0` (calma) a `1` (teatrale)          |
 | `voce_riferimento`      | per la voce espressiva: un file WAV con la voce da imitare (vuoto = Nicola) |
 | `effetto_voce`          | quanto effetto "intelligenza artificiale": da `0` (nessuno) a `1`; predefinito `0.6` |
@@ -221,11 +225,31 @@ con i tuoi amici. Puoi regolare tutto con `attenzione` e `attenzione_in_gioco` i
 Quando gli parli risponde in modo più breve, adatto da ascoltare. Delle risposte lunghe legge l'inizio: il
 resto lo trovi scritto nella finestra.
 
-**Le voci** (`py -3.12 prova_voci.py` per sentirle e scegliere, oppure `/voce nome` in Jarvis):
+### La voce di Jarvis
+
+La voce più fluida e naturale è quella creata su **ElevenLabs**: `py -3.12 prova_voci.py` te la fa creare in un
+paio di minuti. ElevenLabs inventa alcune voci nuove partendo da una descrizione (un uomo calmo ed elegante, con
+un'ironia asciutta, come un maggiordomo digitale), tu le ascolti e tieni quella che preferisci. È una voce nuova,
+fatta solo per Jarvis: non copia nessuno.
+
+- **Cosa serve**: un account su <https://elevenlabs.io> e una chiave API (sezione API Keys, di solito sotto
+  Developers). `prova_voci.py` ti chiede di incollarla e la salva solo sul PC, in `dati/chiave_elevenlabs.txt`;
+  in Jarvis puoi cambiarla con `/chiave elevenlabs`. Non mandarla mai a nessuno.
+- **Quanto costa**: il piano gratuito dà 10.000 caratteri al mese, circa 10 minuti di parlato; i piani a
+  pagamento partono da pochi dollari al mese (prezzi aggiornati su <https://elevenlabs.io/pricing>). Una risposta
+  di Jarvis usa di solito 100-300 caratteri. Per risparmiare: `"parla": "a_voce"` (parla solo quando gli parli)
+  e `limite_voce` più basso.
+- **Senza internet o a crediti finiti** Jarvis non resta muto: parla con la voce di riserva sul PC
+  (`voce_di_riserva`, predefinita `riccardo`) e riprova ElevenLabs dopo qualche minuto.
+- **Modelli**: `modello_elevenlabs` è `eleven_multilingual_v2` (il più naturale). `eleven_flash_v2_5` risponde
+  più in fretta e consuma metà dei caratteri; `eleven_v3` è ancora più espressivo, ma più lento.
+
+**Tutte le voci** (`py -3.12 prova_voci.py` per sentirle e scegliere, oppure `/voce nome` in Jarvis):
 
 | Voce         | Dove funziona       | Com'è                                                        |
 |--------------|---------------------|--------------------------------------------------------------|
-| `espressiva` | sul PC              | **recita con emozione**: la più simile a Jarvis (circa 1,5 GB, serve un processore veloce) |
+| `elevenlabs` | via internet        | **la voce di Jarvis**: fluida e naturale, creata apposta per lui |
+| `espressiva` | sul PC              | recita con emozione, ma non è fluida (circa 1,5 GB, serve un processore veloce) |
 | `riccardo`   | sul PC              | predefinita: veloce e privata, ma piatta                     |
 | `nicola`     | sul PC              | più naturale, privata; da scaricare una volta (circa 340 MB) |
 | `diego`      | via internet        | voce di Microsoft, molto naturale                            |
@@ -269,7 +293,7 @@ Il resoconto entra nella conversazione: puoi chiedergli altro su quello che ha t
 Il primo compito ci mette un po' di più a partire: il cervello grande deve caricarsi in memoria.
 Quando chiudi Jarvis, i compiti non ancora finiti si fermano.
 
-### Le tre modalità (`/cervello ...`)
+## Le tre modalità dei cervelli (`/cervello ...`)
 
 | Modalità  | Come funziona                                                                              |
 |-----------|--------------------------------------------------------------------------------------------|
@@ -324,8 +348,8 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
 - **Il microfono**: l'audio viene analizzato sul PC e subito buttato. Non viene mai salvato né inviato a
   nessuno. Con l'interruttore **Microfono** spento non ascolta proprio. Le frasi dette senza il suo nome le valuta
   il cervello veloce, sul PC; se non lo riguardano, vengono dimenticate subito.
-- **La voce**: `riccardo` e `nicola` funzionano sul PC. Con `diego` e `giuseppe` il testo da leggere viene
-  inviato a Microsoft.
+- **La voce**: `riccardo`, `nicola` ed `espressiva` funzionano sul PC. Con `elevenlabs` il testo da leggere viene
+  inviato a ElevenLabs, con `diego` e `giuseppe` a Microsoft. Il microfono non viene mai inviato a nessuno.
 - Quando risponde **Claude**, la conversazione recente e le tue informazioni in memoria vengono inviate
   ad Anthropic per ottenere la risposta. Con `/cervello locale` non succede mai.
 - Per meteo, Wikipedia e notizie Jarvis si collega a Open-Meteo, Wikipedia e Google News e invia
@@ -350,6 +374,8 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
 - **"La voce non funziona" o "Non posso ascoltare"**: il messaggio dice cosa manca. Di solito basta avviare
   con `py -3.12 jarvis.py` dopo aver installato le librerie (punto 5 dell'installazione). Se dice che Windows
   blocca una libreria, prova un'altra voce con `py -3.12 prova_voci.py`.
+- **La voce di ElevenLabs non parla**: il messaggio nella finestra dice perché (chiave, caratteri finiti,
+  internet). Intanto Jarvis parla con la voce di riserva. Per rifare la voce: `py -3.12 prova_voci.py`.
 - **Non mi sente**: prova `py -3.12 prova_ascolto.py`. Se usa il microfono sbagliato, scrivi una parte del
   nome di quello giusto in `"microfono"` dentro `config.json` (il nome lo vedi all'inizio della prova).
 - **Mi sente ma non risponde**: controlla di dire "Jarvis" all'inizio o alla fine della frase.

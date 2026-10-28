@@ -1,12 +1,13 @@
-"""Fa ascoltare le voci di Jarvis e salva in config.json quella scelta.
+"""Crea la voce di Jarvis su ElevenLabs, oppure fa ascoltare le voci sul PC, e salva in config.json la scelta.
 
 Uso:  py -3.12 prova_voci.py
-La voce espressiva si sente con tre livelli di emozione; le altre così come sono e con l'effetto in stile film.
 La prima volta installa le librerie che mancano e scarica le voci. Gli esempi restano in dati/voci_di_prova.
 """
 
+import getpass
 import importlib
 import json
+import random
 import subprocess
 import sys
 import time
@@ -51,6 +52,80 @@ def domanda(testo, scelte):
         print(f"  Scrivi una di queste: {', '.join(scelte)}")
 
 
+def salva_scelta(**impostazioni):
+    config = leggi_config()  # riletta adesso, nel caso sia cambiata intanto
+    config.update(impostazioni)
+    if config.get("parla") == "mai":
+        config["parla"] = "sempre"
+    FILE_CONFIG.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def crea_voce_elevenlabs(nome, t):
+    """Crea con ElevenLabs una voce nuova per Jarvis, da una descrizione. Restituisce True se è andata."""
+    import voce
+    import voce_elevenlabs as el
+
+    if el.leggi_chiave():
+        try:
+            print(el.descrivi_abbonamento(el.richiesta("/v1/user/subscription")))
+        except el.ErroreElevenLabs as e:
+            if e.stato != "missing_permissions":
+                print(f"Problema con ElevenLabs: {e}")
+                return False
+    else:
+        print("\nServe una chiave API di ElevenLabs (il piano gratuito va bene per cominciare):")
+        print("  1. Crea un account su https://elevenlabs.io")
+        print("  2. Apri la sezione API Keys (di solito sotto Developers, nel menu a sinistra) e crea una chiave.")
+        print("     Lascia attivi i permessi: servono almeno Text to Speech, Voices e Text to Voice.")
+        print("  3. Copiala e incollala qui sotto: mentre la incolli non si vede. Non mandarla mai a nessuno.")
+        print(el.salva_chiave(getpass.getpass("Chiave: ")))
+        if not el.leggi_chiave():
+            return False
+    descrizione, seme = el.DESCRIZIONE_JARVIS, None
+    while True:
+        print("\nElevenLabs crea alcune voci nuove dalla descrizione (qualche secondo)...")
+        try:
+            voci = el.progetta_voci(descrizione, seme=seme)
+        except el.ErroreElevenLabs as e:
+            print(f"Non ci sono riuscito: {e}")
+            return False
+        for numero, (_, audio, frequenza) in enumerate(voci, 1):
+            voce.salva_wav(CARTELLA_ESEMPI / f"elevenlabs-{numero}.wav", audio, frequenza)
+            print(f"  Voce {numero}...", flush=True)
+            ascolta(audio, frequenza)
+        numeri = tuple(str(n) for n in range(1, len(voci) + 1))
+        while True:
+            scelta = domanda(f"\nQuale tieni? Il numero ({', '.join(numeri)}); r per riascoltarle; n per crearne "
+                             "altre; d per scrivere tu la descrizione; x per lasciar perdere: ",
+                             numeri + ("r", "n", "d", "x"))
+            if scelta != "r":
+                break
+            for _, audio, frequenza in voci:
+                ascolta(audio, frequenza)
+        if scelta == "x":
+            return False
+        if scelta == "n":
+            seme = random.randint(1, 10 ** 6)
+            continue
+        if scelta == "d":
+            print("Descrivi la voce (meglio in inglese, almeno 20 caratteri), per esempio età, tono, accento e")
+            print("carattere. Non usare il nome di persone reali: la voce deve essere nuova.")
+            nuova = input("> ").strip()
+            descrizione = nuova if 20 <= len(nuova) <= 1000 else descrizione
+            seme = None
+            continue
+        try:
+            id_voce = el.crea_voce(voci[int(scelta) - 1][0], nome=nome, descrizione=descrizione)
+            audio = el.sintetizza(f"Eccomi{t}. Da questo momento parlerò con questa voce.", id_voce)
+        except el.ErroreElevenLabs as e:
+            print(f"Non sono riuscito a salvarla: {e}")
+            return False
+        salva_scelta(voce="elevenlabs", voce_elevenlabs=id_voce, effetto_voce=0.0)
+        ascolta(audio, el.FREQUENZA)
+        print(f"\nFatto! {nome} ora parla con la voce {scelta}. La trovi anche nel tuo account ElevenLabs.")
+        return True
+
+
 def main():
     if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -76,18 +151,23 @@ def main():
              "tutti i sistemi sono operativi, e a Cagliari ci sono ventidue gradi. Mi permetta un consiglio, però: "
              "domani pioverà, non dimentichi l'ombrello.")
 
-    print("La voce espressiva recita con emozione: è quella più simile a Jarvis, ma pesa circa 1,5 GB e ha bisogno")
-    print("di un processore veloce. Le altre le hai già sentite.")
+    CARTELLA_ESEMPI.mkdir(parents=True, exist_ok=True)
+    print("La voce più fluida e naturale si crea su ElevenLabs: una voce nuova, fatta apposta per Jarvis.")
+    print("Funziona via internet; il piano gratuito basta per circa 10 minuti di parlato al mese.")
+    if domanda("Creo la voce di Jarvis con ElevenLabs? (s/n) ", ("s", "n")) == "s" and crea_voce_elevenlabs(nome, t):
+        return
+    print("\nAllora ecco le voci sul PC. La voce espressiva recita con emozione, ma pesa circa 1,5 GB e ha")
+    print("bisogno di un processore veloce.")
     tutte = domanda("Provo solo la voce espressiva (e) oppure tutte le voci (t)? ", ("e", "t")) == "t"
     online = tutte and domanda("Provo anche le voci di Microsoft, via internet? (s/n) ", ("s", "n")) == "s"
-    CARTELLA_ESEMPI.mkdir(parents=True, exist_ok=True)
 
     def avanzamento(file, scaricati, totale):
         print(f"\r  {scarica.descrivi_avanzamento(file, scaricati, totale)}   ", end="", flush=True)
 
     esempi = {}  # numero → (voce, emozione, effetto, audio, frequenza)
     for nome_voce, info in voce.VOCI.items():
-        if (nome_voce != "espressiva" and not tutte) or (info["motore"] == "edge" and not online):
+        if (nome_voce != "espressiva" and not tutte) or (info["motore"] == "edge" and not online) \
+                or info["motore"] == "elevenlabs":
             continue
         print(f"\n{info['descrizione']}")
         motore = None
@@ -137,13 +217,7 @@ def main():
         *_, audio, frequenza = esempi[scelta[1:]]
         ascolta(audio, frequenza)
     nome_voce, emozione, effetto, *_ = esempi[scelta]
-    config = leggi_config()  # riletta adesso, nel caso sia cambiata intanto
-    config.update(voce=nome_voce, effetto_voce=effetto)
-    if emozione is not None:
-        config["emozione_voce"] = emozione
-    if config.get("parla") == "mai":
-        config["parla"] = "sempre"
-    FILE_CONFIG.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    salva_scelta(voce=nome_voce, effetto_voce=effetto, **({} if emozione is None else {"emozione_voce": emozione}))
     print(f"\nFatto! {nome} userà la voce {nome_voce}. Puoi cambiarla quando vuoi rilanciando questo programma, "
           "oppure in Jarvis con /voce.")
 

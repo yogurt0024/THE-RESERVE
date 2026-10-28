@@ -1,6 +1,8 @@
 """Finti Ollama, Claude e internet per i test: rispondono come quelli veri, ma senza rete e senza costi."""
 
+import base64
 import json
+import struct
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -178,3 +180,50 @@ def internet_finto(url, parametri=None):
                   "temperature_2m_max": [22.1, 19.0, 20.3], "temperature_2m_min": [15.2, 14.0, 13.1],
                   "precipitation_probability_max": [10, 80, None]},
     }).encode()
+
+
+class FintoElevenLabs(BaseHTTPRequestHandler):
+    """Risponde come l'API di ElevenLabs. La chiave giusta è "chiave-buona"; la voce "esaurita" ha finito i crediti."""
+
+    richieste = []
+
+    def log_message(self, *argomenti):
+        pass
+
+    def _rispondi(self, codice, corpo, tipo="application/json"):
+        if isinstance(corpo, (dict, list)):
+            corpo = json.dumps(corpo).encode()
+        self.send_response(codice)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Length", str(len(corpo)))
+        self.end_headers()
+        self.wfile.write(corpo)
+
+    def _errore(self, codice, stato):
+        self._rispondi(codice, {"detail": {"status": stato, "message": stato}})
+
+    def do_GET(self):
+        FintoElevenLabs.richieste.append({"percorso": self.path})
+        if self.headers.get("xi-api-key") != "chiave-buona":
+            return self._errore(401, "invalid_api_key")
+        self._rispondi(200, {"tier": "free", "character_count": 1200, "character_limit": 10000})
+
+    def do_POST(self):
+        corpo = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        FintoElevenLabs.richieste.append({"percorso": self.path, **corpo})
+        if self.headers.get("xi-api-key") != "chiave-buona":
+            return self._errore(401, "invalid_api_key")
+        percorso = self.path.split("?")[0]
+        if percorso == "/v1/text-to-voice/design":
+            anteprime = [{"generated_voice_id": f"provvisoria-{n}", "media_type": "audio/pcm", "duration_secs": 1.0,
+                          "audio_base_64": base64.b64encode(struct.pack("<2400h", *[n * 1000] * 2400)).decode()}
+                         for n in (1, 2, 3)]
+            return self._rispondi(200, {"previews": anteprime, "text": corpo["text"]})
+        if percorso == "/v1/text-to-voice":
+            return self._rispondi(200, {"voice_id": "voce-jarvis", "name": corpo["voice_name"]})
+        if percorso == "/v1/text-to-speech/esaurita":
+            return self._errore(401, "quota_exceeded")
+        if percorso == "/v1/text-to-speech/voce-jarvis":
+            campioni = 10 * len(corpo["text"])
+            return self._rispondi(200, struct.pack(f"<{campioni}h", *[3000] * campioni), "audio/pcm")
+        self._errore(404, "voice_not_found")

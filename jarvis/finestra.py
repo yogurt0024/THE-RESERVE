@@ -18,6 +18,7 @@ import ascolto
 import notifiche
 import scarica
 import voce
+import voce_elevenlabs
 from cervello import SEPARATORE_DATI, Assistente, ErroreOllama, carica_config
 
 COLORI = {
@@ -267,6 +268,9 @@ class Finestra:
         if minuscolo == "/chiave":
             self._chiedi_chiave()
             return
+        if minuscolo == "/chiave elevenlabs":
+            self._chiedi_chiave_elevenlabs()
+            return
         if minuscolo == "/ascolto":
             self.microfono.set(not self.microfono.get())
             self._cambia_microfono()
@@ -293,6 +297,20 @@ class Finestra:
         if chiave:
             self._riga(self.assistente.imposta_chiave(chiave), "info")
             self.casella.configure(state="normal" if self.assistente.supporta_ragionamento else "disabled")
+
+    def _chiedi_chiave_elevenlabs(self):
+        chiave = simpledialog.askstring(
+            "Chiave API di ElevenLabs", "Incolla la chiave API di ElevenLabs.\nResta salvata solo sul tuo PC.",
+            show="*", parent=self.root)
+        if not chiave:
+            return
+
+        def salva():
+            self.eventi.put(("info", voce_elevenlabs.salva_chiave(chiave)))
+            if self.config["voce"] == "elevenlabs" and self.config["parla"] != "mai":
+                self._prepara_voce(nuova=True)
+
+        threading.Thread(target=salva, daemon=True).start()
 
     def _lavora(self, testo, a_voce, spontaneo=False):
         try:
