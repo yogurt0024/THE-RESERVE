@@ -464,6 +464,32 @@ def schemi(config):
     return elenco
 
 
+def valida(nome, argomenti, elenco):
+    """Controlla gli argomenti chiesti dal modello contro lo schema dello strumento.
+
+    Restituisce None se vanno bene, altrimenti una frase che spiega il problema.
+    """
+    schema = next((s["function"]["parameters"] for s in elenco if s["function"]["name"] == nome), None)
+    if schema is None:
+        return f"lo strumento {nome} non esiste"
+    if not isinstance(argomenti, dict):
+        return "gli argomenti devono essere un oggetto JSON"
+    mancanti = [campo for campo in schema["required"] if campo not in argomenti]
+    if mancanti:
+        return f"manca {', '.join(mancanti)}"
+    for campo, valore in argomenti.items():
+        regola = schema["properties"].get(campo)
+        if regola is None:
+            return f"argomento sconosciuto: {campo}"
+        if regola["type"] == "string" and not isinstance(valore, str):
+            return f"{campo} deve essere un testo"
+        if regola["type"] == "number" and (isinstance(valore, bool) or not isinstance(valore, (int, float))):
+            return f"{campo} deve essere un numero"
+        if "enum" in regola and valore not in regola["enum"]:
+            return f"{campo} deve essere uno tra: {', '.join(regola['enum'])}"
+    return None
+
+
 def descrivi(nome, argomenti):
     """Frase da mostrare all'utente mentre lo strumento lavora."""
     a = {k: str(v) for k, v in argomenti.items()}

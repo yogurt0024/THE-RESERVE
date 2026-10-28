@@ -5,6 +5,7 @@ Avvio:  python jarvis.py           apre la finestra grafica
 Le impostazioni (nome, modello, città, ...) sono in config.json.
 """
 
+import getpass
 import sys
 
 from cervello import Assistente, ErroreOllama, carica_config
@@ -71,6 +72,10 @@ def terminale(config):
             continue
         if domanda.lower() in ("/esci", "esci"):
             break
+        if domanda.lower() == "/chiave":
+            chiave = getpass.getpass("Incolla la chiave API di Claude (mentre la incolli non si vede): ")
+            print(f"» {assistente.imposta_chiave(chiave)}\n")
+            continue
         mostra(assistente.gestisci(domanda), nome)
 
     print(f"{nome}: Arrivederci!")

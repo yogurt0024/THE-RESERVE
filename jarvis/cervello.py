@@ -10,6 +10,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+import cervello_claude
 import strumenti
 from strumenti import ErroreStrumento
 
@@ -26,6 +27,10 @@ CONFIG_PREDEFINITA = {
     "modello": "qwen3:4b-instruct",
     "modello_ragionamento": "qwen3:4b",
     "ragionamento": False,
+    "cervello": "ibrido",
+    "modello_claude": "claude-opus-5-5",
+    "sforzo_claude": "medium",
+    "mostra_costi": True,
     "internet": True,
     "messaggi_da_ricordare": 20,
     "ollama_url": "http://localhost:11434",
@@ -57,12 +62,28 @@ AIUTO = """Comandi:
 /memoria — mostra cosa ricordo
 /dimentica <numero> — cancella un ricordo (/dimentica tutto li cancella tutti)
 /pensa — attiva o disattiva il ragionamento profondo
+/cervello locale, ibrido o claude — quale cervello usare
+/chiave — inserisci la chiave API di Claude
+/costi — quanto hai speso con Claude
 /nuova — nuova conversazione
 /esci — chiude
 Puoi anche chiedere normalmente, per esempio "che tempo fa a Cagliari?" o "ricordati che...\""""
 
 # Ollama gira sullo stesso PC: niente proxy di sistema in mezzo.
 _connessione = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+
+
+# Strumento speciale del modello locale: passa la domanda a Claude.
+STRUMENTO_AVANZATO = {"type": "function", "function": {
+    "name": "chiedi_al_cervello_avanzato",
+    "description": "Passa la domanda a Claude, un'intelligenza artificiale molto più potente di te, che risponderà "
+                   "direttamente all'utente. Usalo per domande difficili, ragionamenti lunghi, problemi di "
+                   "matematica o logica, consigli importanti, programmazione, compiti di scuola complessi, o quando "
+                   "non sei sicuro della risposta. Non usarlo per saluti, chiacchiere, meteo, calcoli semplici, "
+                   "timer o per aprire programmi.",
+    "parameters": {"type": "object", "properties": {
+        "motivo": {"type": "string", "description": "Perché serve il cervello avanzato"}}, "required": []},
+}}
 
 
 class ErroreOllama(Exception):
@@ -121,6 +142,8 @@ class PulitoreMarkdown:
         self.titolo = False
         self.vuoto = True  # niente spazi o righe vuote prima del testo vero
         self.dopo_emoji = False
+        self.spazio = False  # uno spazio si scrive solo quando arriva il carattere dopo
+        self.spazio_grassetto = False
         self.uscita = []
 
     def aggiungi(self, testo):
@@ -139,15 +162,17 @@ class PulitoreMarkdown:
     def fine(self):
         self._asterischi_prima_di("")
         self.prefisso = ""
+        self.spazio = False
         return self._svuota()
 
     def _carattere(self, c):
         if _emoji(c):  # Jarvis non usa emoji
             self.dopo_emoji = True
             return
-        if c == " " and self.dopo_emoji and self.precedente == " ":
-            return  # niente doppio spazio dove c'era l'emoji
+        self._carattere_visibile(c)
         self.dopo_emoji = False
+
+    def _carattere_visibile(self, c):
         if self.inizio_riga:
             if c in " \t#*-+>":
                 self.prefisso += c
@@ -162,6 +187,10 @@ class PulitoreMarkdown:
             self._nuova_riga()
         elif c == "*":
             self.asterischi += 1
+        elif c == " ":
+            self._asterischi_prima_di(c)
+            self.spazio = True
+            self.spazio_grassetto = self.grassetto or self.titolo
         else:
             self._asterischi_prima_di(c)
             self._scrivi(c)
@@ -190,7 +219,8 @@ class PulitoreMarkdown:
         if (n // 2) % 2:
             self.grassetto = not self.grassetto
         # Un asterisco attaccato a una parola è corsivo (*così*): si toglie.
-        if n % 2 and not (self.precedente.isalpha() or successivo.isalpha()):
+        prima = " " if self.spazio else self.precedente
+        if n % 2 and not (prima.isalpha() or successivo.isalpha()):
             self._scrivi("*")
 
     def _nuova_riga(self):
@@ -202,6 +232,11 @@ class PulitoreMarkdown:
     def _scrivi(self, testo):
         if not testo or (self.vuoto and not testo.strip()):
             return
+        if self.spazio:
+            self.spazio = False
+            # Lo spazio si perde a fine riga e davanti alla punteggiatura dove c'era un'emoji.
+            if testo[0] != "\n" and not (self.dopo_emoji and testo[0] in ",.;:!?"):
+                self.uscita.append((" ", self.spazio_grassetto))
         self.vuoto = False
         self.uscita.append((testo, self.grassetto or self.titolo))
         self.precedente = testo[-1]
@@ -217,7 +252,7 @@ class PulitoreMarkdown:
         return uniti
 
 
-def prompt_di_sistema(config, modello, capacita, fatti, adesso=None):
+def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_avanzato=False):
     """Le istruzioni che il modello riceve a ogni domanda (usate anche per creare il dataset di addestramento)."""
     adesso = adesso or datetime.now()
     nome, titolo = config["nome"], config["come_chiamarmi"]
@@ -256,6 +291,8 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None):
     righe += [
         "",
         "Come funzioni (usalo se l'utente ti chiede cosa sai fare o quali sono i tuoi limiti):",
+        f"- Sei il cervello avanzato di un programma che gira sul PC dell'utente: usi il modello {modello} "
+        "online, tramite l'API di Anthropic." if modello.startswith("claude") else
         f"- Sei un programma che gira interamente sul PC dell'utente, con il modello {modello} tramite Ollama.",
         "- Hai una memoria permanente: ricordi le cose che l'utente ti chiede di ricordare "
         "e gli ultimi messaggi, anche dopo essere stato chiuso.",
@@ -263,6 +300,7 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None):
     if "tools" in capacita:
         righe.append(
             "- Hai degli strumenti: "
+            + ("ricerche sul web, " if config["internet"] and modello.startswith("claude") else "")
             + ("meteo, Wikipedia, notizie, " if config["internet"] else "")
             + "aprire siti, aprire ricerche nel browser, aprire programmi, calcoli esatti, timer, "
             "diagnostica del PC, volume e musica. "
@@ -273,6 +311,9 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None):
             "- Non puoi usare strumenti da solo: per meteo, Wikipedia, notizie, calcoli, timer "
             "e per aprire programmi l'utente può usare i comandi elencati da /aiuto."
         )
+    if cervello_avanzato:
+        righe.append("- Per le domande difficili puoi passare la parola al cervello avanzato (Claude) con lo "
+                     "strumento chiedi_al_cervello_avanzato.")
     if not config["internet"]:
         righe.append("- Non sei collegato a internet.")
     righe += [
@@ -308,6 +349,7 @@ class Assistente:
         self.pensa_sempre = set()  # modelli che ragionano anche quando non glielo si chiede
         self.supporta_strumenti = False
         self.supporta_ragionamento = False
+        self.claude = cervello_claude.CervelloClaude(config)
         self.fatti = _leggi_json(FILE_MEMORIA).get("fatti", [])
         self.cronologia = _leggi_json(FILE_CONVERSAZIONE).get("messaggi", [])[-self.limite:]
         inizio = rf"^(?:{re.escape(self.nome)}[,:!]?\s+)?"
@@ -345,7 +387,21 @@ class Assistente:
         self._richiesta("/api/chat", dati, timeout).close()
 
     def _modello_attuale(self):
-        return self.modello_ragionamento if self.ragionamento and self.supporta_ragionamento else self.modello
+        if self.ragionamento and self.modello_ragionamento:
+            return self.modello_ragionamento
+        return self.modello
+
+    def _usa_claude(self):
+        modo = self.config["cervello"]
+        return self.claude.pronto and (modo == "claude" or (modo == "ibrido" and self.ragionamento))
+
+    def _claude_su_richiesta(self):
+        """In modalità ibrida il modello locale può passare le domande difficili a Claude."""
+        return self.claude.pronto and self.config["cervello"] == "ibrido"
+
+    def _aggiorna_ragionamento(self):
+        claude = self.claude.pronto and self.config["cervello"] != "locale"
+        self.supporta_ragionamento = claude or self.modello_ragionamento is not None
 
     def avvia(self):
         with self._richiesta("/api/tags", timeout=5) as risposta:
@@ -373,8 +429,9 @@ class Assistente:
         elif secondo:
             self.ragionamento_da_installare = secondo
         self.supporta_strumenti = "tools" in self.capacita[self.modello]
-        self.supporta_ragionamento = self.modello_ragionamento is not None
-        self._carica(self._modello_attuale())
+        self._aggiorna_ragionamento()
+        if not self._usa_claude():
+            self._carica(self._modello_attuale())
 
     def chiudi(self):
         # Libera la memoria della scheda video, così resta tutta per i giochi.
@@ -394,8 +451,21 @@ class Assistente:
                 "Questo modello non sa usare gli strumenti da solo: usa i comandi (/aiuto), "
                 "oppure installa qwen3:4b-instruct."
             )
+        modo = self.config["cervello"]
+        if modo != "locale":
+            if self.claude.pronto:
+                uso = ("rispondo sempre con lui" if modo == "claude"
+                       else "lo uso per il ragionamento profondo e per le domande difficili")
+                righe.append(f"Cervello avanzato: Claude ({self.claude.modello}), {uso}.")
+                spesa = cervello_claude.leggi_costi()["mesi"].get(f"{datetime.now():%Y-%m}", 0.0)
+                righe.append(f"Spesa con Claude questo mese: {cervello_claude.dollari(spesa)} (/costi).")
+            else:
+                righe.append(f"Cervello avanzato non disponibile: {self.claude.problema}.")
         if self.supporta_ragionamento:
-            con = f" (con {self.modello_ragionamento})" if self.modello_ragionamento != self.modello else ""
+            if self.claude.pronto and modo != "locale":
+                con = " (con Claude)"
+            else:
+                con = f" (con {self.modello_ragionamento})" if self.modello_ragionamento != self.modello else ""
             stato = "attivo" if self.ragionamento else "spento"
             righe.append(f"Ragionamento profondo{con}: {stato} (/pensa per cambiarlo).")
         elif self.ragionamento_da_installare:
@@ -424,7 +494,16 @@ class Assistente:
         _scrivi_json(FILE_CONVERSAZIONE, {"messaggi": self.cronologia})
 
     def _prompt_di_sistema(self, modello):
-        return prompt_di_sistema(self.config, modello, self.capacita.get(modello, ()), self.fatti)
+        if modello.startswith("claude"):
+            return prompt_di_sistema(self.config, modello, {"tools"}, self.fatti)
+        return prompt_di_sistema(self.config, modello, self.capacita.get(modello, ()), self.fatti,
+                                 cervello_avanzato=self._claude_su_richiesta())
+
+    def imposta_chiave(self, chiave):
+        """Salva la chiave API di Claude (la chiedono la finestra o la modalità testo, senza mostrarla)."""
+        esito = self.claude.salva_chiave(chiave)
+        self._aggiorna_ragionamento()
+        return esito
 
     # --- Conversazione ---
 
@@ -525,6 +604,25 @@ class Assistente:
                     yield ("info", f"Prima installa il modello: ollama pull {self.ragionamento_da_installare}")
                 else:
                     yield ("info", f"Il modello {self.modello} non supporta il ragionamento profondo.")
+            elif nome == "costi":
+                dati = cervello_claude.leggi_costi()
+                mese = dati["mesi"].get(f"{datetime.now():%Y-%m}", 0.0)
+                yield ("info", f"Spesa con Claude: {cervello_claude.dollari(mese)} questo mese, "
+                               f"{cervello_claude.dollari(dati.get('totale', 0.0))} in totale. È una stima: il "
+                               "conto preciso è su console.anthropic.com.")
+            elif nome == "cervello":
+                if argomento not in ("locale", "ibrido", "claude"):
+                    yield ("info", "Scrivi /cervello locale (solo sul PC), /cervello ibrido (Claude per le cose "
+                                   "difficili) oppure /cervello claude (sempre Claude).")
+                else:
+                    avviso = self._salva_impostazione("cervello", argomento)
+                    self._aggiorna_ragionamento()
+                    spiegazione = {"locale": "uso solo il modello sul PC.",
+                                   "ibrido": "uso il modello sul PC e Claude per le cose difficili.",
+                                   "claude": "rispondo sempre con Claude."}[argomento]
+                    problema = "" if self.claude.pronto or argomento == "locale" else \
+                        f" Però Claude non è disponibile: {self.claude.problema}."
+                    yield ("info", f"Cervello {argomento}: {spiegazione}{problema}{avviso}")
             elif nome in ("meteo", "wiki", "notizie"):
                 return (yield from self._comando_internet(nome, argomento))
             elif nome == "apri":
@@ -582,39 +680,16 @@ class Assistente:
 
     def _chiedi(self, domanda, stop, con_strumenti=True):
         self.cronologia.append({"role": "user", "content": domanda})
-        modello = self._modello_attuale()
-        capacita = self.capacita.get(modello, set())
-        messaggi = [{"role": "system", "content": self._prompt_di_sistema(modello)}] + self.cronologia
         pulitore = PulitoreMarkdown()
         risposta = []  # testo pulito, per la cronologia
         interrotto = False
         try:
-            for giro in range(GIRI_STRUMENTI + 1):
-                dati = {"model": modello, "messages": messaggi, "stream": True, "options": {"num_ctx": CONTESTO}}
-                if "thinking" in capacita:
-                    dati["think"] = self.ragionamento or modello in self.pensa_sempre
-                if con_strumenti and "tools" in capacita and giro < GIRI_STRUMENTI:
-                    dati["tools"] = strumenti.schemi(self.config)
-                contenuto, chiamate = yield from self._flusso(dati, pulitore, risposta, stop)
-                if not chiamate:
-                    break
-                yield from self._emetti(pulitore.a_capo(), risposta)
-                messaggi.append({"role": "assistant", "content": contenuto, "tool_calls": chiamate})
-                for chiamata in chiamate:
-                    funzione = chiamata.get("function", {})
-                    nome, argomenti = funzione.get("name", ""), funzione.get("arguments") or {}
-                    if isinstance(argomenti, str):
-                        try:
-                            argomenti = json.loads(argomenti)
-                        except ValueError:
-                            argomenti = {}
-                    if not isinstance(argomenti, dict):
-                        argomenti = {}
-                    yield ("info", strumenti.descrivi(nome, argomenti))
-                    risultato = strumenti.esegui(nome, argomenti, self.config, self.avvisa)
-                    messaggi.append({"role": "tool", "content": risultato, "tool_name": nome})
+            if self._usa_claude():
+                yield from self._con_claude(pulitore, risposta, stop, con_strumenti)
+            else:
+                yield from self._con_ollama(pulitore, risposta, stop, con_strumenti)
             yield from self._emetti(pulitore.fine(), risposta)
-        except (KeyboardInterrupt, _Interrotto):
+        except (KeyboardInterrupt, _Interrotto, cervello_claude.Interrotto):
             interrotto = True
             yield ("info", "Risposta interrotta.")
         finally:
@@ -625,6 +700,60 @@ class Assistente:
                 self.cronologia.pop()
             del self.cronologia[:-self.limite]
             self._salva_conversazione()
+
+    def _con_ollama(self, pulitore, risposta, stop, con_strumenti):
+        modello = self._modello_attuale()
+        capacita = self.capacita.get(modello, set())
+        messaggi = [{"role": "system", "content": self._prompt_di_sistema(modello)}] + self.cronologia
+        for giro in range(GIRI_STRUMENTI + 1):
+            dati = {"model": modello, "messages": messaggi, "stream": True, "options": {"num_ctx": CONTESTO}}
+            if "thinking" in capacita:
+                dati["think"] = self.ragionamento or modello in self.pensa_sempre
+            if con_strumenti and "tools" in capacita and giro < GIRI_STRUMENTI:
+                dati["tools"] = strumenti.schemi(self.config)
+                if self._claude_su_richiesta():
+                    dati["tools"].append(STRUMENTO_AVANZATO)
+            contenuto, chiamate = yield from self._flusso(dati, pulitore, risposta, stop)
+            if not chiamate:
+                return
+            yield from self._emetti(pulitore.a_capo(), risposta)
+            if any(c.get("function", {}).get("name") == "chiedi_al_cervello_avanzato" for c in chiamate):
+                yield ("info", "Passo la domanda al cervello avanzato (Claude)...")
+                yield from self._con_claude(pulitore, risposta, stop, con_strumenti)
+                return
+            messaggi.append({"role": "assistant", "content": contenuto, "tool_calls": chiamate})
+            for chiamata in chiamate:
+                funzione = chiamata.get("function", {})
+                nome, argomenti = funzione.get("name", ""), funzione.get("arguments") or {}
+                if isinstance(argomenti, str):
+                    try:
+                        argomenti = json.loads(argomenti)
+                    except ValueError:
+                        argomenti = {}
+                if not isinstance(argomenti, dict):
+                    argomenti = {}
+                yield ("info", strumenti.descrivi(nome, argomenti))
+                risultato = strumenti.esegui(nome, argomenti, self.config, self.avvisa)
+                messaggi.append({"role": "tool", "content": risultato, "tool_name": nome})
+
+    def _con_claude(self, pulitore, risposta, stop, con_strumenti):
+        sistema = self._prompt_di_sistema(self.claude.modello)
+        schemi = strumenti.schemi(self.config) if con_strumenti else None
+        try:
+            for evento in self.claude.rispondi(sistema, self.cronologia, schemi, self._esegui, stop):
+                if evento[0] == "grezzo":
+                    yield from self._emetti(pulitore.aggiungi(evento[1]), risposta)
+                else:
+                    if evento[0] == "info":
+                        yield from self._emetti(pulitore.a_capo(), risposta)
+                    yield evento
+        except cervello_claude.ErroreClaude as e:
+            raise ErroreOllama(str(e)) from None
+        if self.config["mostra_costi"] and self.claude.costo_ultima_risposta:
+            yield ("info", f"Costo di questa risposta: circa {cervello_claude.dollari(self.claude.costo_ultima_risposta)}")
+
+    def _esegui(self, nome, argomenti):
+        return strumenti.esegui(nome, argomenti, self.config, self.avvisa)
 
     def _flusso(self, dati, pulitore, risposta, stop):
         """Legge la risposta di Ollama mentre arriva. Restituisce (testo, strumenti chiesti).

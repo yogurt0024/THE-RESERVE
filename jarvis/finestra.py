@@ -8,7 +8,7 @@ import queue
 import sys
 import threading
 import tkinter as tk
-from tkinter import messagebox
+from tkinter import messagebox, simpledialog
 
 from cervello import SEPARATORE_DATI, Assistente, ErroreOllama, carica_config
 
@@ -190,11 +190,22 @@ class Finestra:
         if testo.lower() in ("/esci", "esci"):
             self._chiudi()
             return
+        if testo.lower() == "/chiave":
+            self._chiedi_chiave()
+            return
         if mostra:
             self._messaggio("Tu", testo, "tu")
         self.etichetta_scritta = False
         self._occupa(True)
         threading.Thread(target=self._lavora, args=(testo,), daemon=True).start()
+
+    def _chiedi_chiave(self):
+        chiave = simpledialog.askstring(
+            "Chiave API di Claude", "Incolla la chiave API (inizia con sk-ant-).\nResta salvata solo sul tuo PC.",
+            show="*", parent=self.root)
+        if chiave:
+            self._riga(self.assistente.imposta_chiave(chiave), "info")
+            self.casella.configure(state="normal" if self.assistente.supporta_ragionamento else "disabled")
 
     def _lavora(self, testo):
         try:

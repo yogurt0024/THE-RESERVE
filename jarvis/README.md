@@ -14,6 +14,8 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 - **Volume e musica**: alza, abbassa, muto, pausa, canzone successiva o precedente.
 - **Ragionamento profondo**: per le domande difficili pensa prima di rispondere (più lento, più preciso).
 - **Sa cosa sa fare**: chiedigli "cosa sai fare?" o "quali sono i tuoi limiti?".
+- **Cervello avanzato**: per le domande difficili usa Claude, molto più intelligente
+  (vedi [Cervello avanzato](#cervello-avanzato-claude)).
 - **Un modello tutto suo**: puoi addestrare un modello che ha il carattere di Jarvis
   (vedi [addestramento/README.md](addestramento/README.md)).
 
@@ -71,6 +73,9 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/memoria`                    | mostra cosa ricorda                                 |
 | `/dimentica <numero>`         | cancella un ricordo (`/dimentica tutto` li cancella tutti) |
 | `/pensa`                      | attiva o spegne il ragionamento profondo            |
+| `/cervello <modalità>`        | `locale`, `ibrido` o `claude` (vedi sotto)          |
+| `/chiave`                     | inserisci la chiave API di Claude                   |
+| `/costi`                      | quanto hai speso con Claude                         |
 | `/nuova`                      | nuova conversazione (la memoria permanente resta)   |
 | `/esci`                       | chiude Jarvis                                       |
 
@@ -92,6 +97,10 @@ Apri `config.json` con il Blocco note:
 | `modello`               | il modello per le risposte normali (vedi sotto)                 |
 | `modello_ragionamento`  | il modello per il ragionamento profondo; vuoto = nessuno        |
 | `ragionamento`          | `true` per avere il ragionamento profondo già attivo all'avvio  |
+| `cervello`              | `"ibrido"`, `"locale"` o `"claude"` (vedi sotto)                |
+| `modello_claude`        | quale modello di Claude usare (predefinito `claude-opus-5-5`)   |
+| `sforzo_claude`         | quanto ragiona Claude: `low`, `medium`, `high` (più alto = più preciso e più caro) |
+| `mostra_costi`          | `false` per non vedere il costo di ogni risposta di Claude      |
 | `internet`              | `false` per non usare mai internet (niente meteo, Wikipedia, notizie) |
 | `messaggi_da_ricordare` | quanti messaggi recenti tiene a mente                           |
 | `programmi`             | i programmi che Jarvis può aprire (vedi sotto)                  |
@@ -132,9 +141,61 @@ Alcuni modelli (come `qwen3:4b`) ragionano sempre, anche quando non serve. Jarvi
 ragionamento: nella finestra scompare da solo; nel Prompt dei comandi può comparire una volta,
 poi Jarvis impara a nasconderlo.
 
+## Cervello avanzato (Claude)
+
+Il modello sul tuo PC è veloce e gratuito, ma piccolo. Per le domande difficili Jarvis può usare
+**Claude**, molto più intelligente, tramite l'API di Anthropic.
+
+**Come attivarlo:**
+1. Nel Prompt dei comandi: `python -m pip install anthropic`.
+2. Su <https://console.anthropic.com> crea una chiave API. Lì imposta anche un **limite di spesa
+   mensile** (Settings → Limits), così non puoi spendere più di quanto vuoi.
+3. In Jarvis scrivi `/chiave` e incollala. Resta salvata solo sul tuo PC, in `dati/chiave_claude.txt`.
+   **Non mandarla mai a nessuno e non incollarla in chat.**
+
+**Le tre modalità** (`/cervello ...`):
+
+| Modalità  | Come funziona                                                                              |
+|-----------|--------------------------------------------------------------------------------------------|
+| `ibrido`  | **consigliata**: risponde il modello del PC; le domande difficili e il ragionamento profondo passano a Claude |
+| `locale`  | solo il modello del PC: gratis e tutto privato                                             |
+| `claude`  | risponde sempre Claude: più intelligente, ma ogni risposta costa                           |
+
+**Quanto costa:** Claude si paga a consumo. Una risposta normale costa di solito meno di un centesimo
+di dollaro, una lunga con ricerche sul web qualche centesimo. Dopo ogni risposta Jarvis mostra una stima
+del costo; `/costi` mostra il totale del mese. Il conto preciso è sempre su console.anthropic.com.
+
+Con Claude, Jarvis può anche **cercare sul web** davvero (se la ricerca web è attiva sul tuo account
+Anthropic: si attiva nelle impostazioni della console).
+
+## Prova di compatibilità
+
+Le prossime funzioni (voce, parola "Jarvis", webcam) hanno bisogno di librerie che il Controllo
+intelligente delle app di Windows potrebbe bloccare. Per scoprirlo, nella cartella `jarvis`:
+
+```
+python prova_compatibilita.py
+```
+
+Ci vogliono 5-15 minuti. Alla fine il riepilogo è in `dati/compatibilita.txt`: copialo e mandalo.
+Non contiene la tua chiave API.
+
+## Test automatici
+
+Per controllare che tutto funzioni dopo una modifica, nella cartella `jarvis`:
+
+```
+python -m unittest
+```
+
+Usano Ollama, Claude e internet finti: non costano niente e non toccano i tuoi dati.
+
 ## Privacy
 
-- L'intelligenza artificiale, la memoria e le conversazioni restano sul tuo PC (nella cartella `dati`).
+- Con il cervello `locale`, l'intelligenza artificiale, la memoria e le conversazioni restano sul tuo PC
+  (nella cartella `dati`).
+- Quando risponde **Claude**, la conversazione recente e le tue informazioni in memoria vengono inviate
+  ad Anthropic per ottenere la risposta. Con `/cervello locale` non succede mai.
 - Per meteo, Wikipedia e notizie Jarvis si collega a Open-Meteo, Wikipedia e Google News e invia
   solo cosa cercare (per esempio il nome della città). Con `"internet": false` non lo fa mai.
 

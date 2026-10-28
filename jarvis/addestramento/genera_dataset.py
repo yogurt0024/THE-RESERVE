@@ -74,9 +74,11 @@ def esempio(ctx, messaggi, con_strumenti=True):
     for m in messaggi:
         if m["role"] == "assistant":
             m["content"] = ctx.t(m["content"])
-    sistema = cervello.prompt_di_sistema(ctx.config, MODELLO, {"completion", "tools"}, ctx.fatti, ctx.adesso)
+    # Jarvis userà il modello addestrato in modalità ibrida, con Claude a disposizione.
+    sistema = cervello.prompt_di_sistema(ctx.config, MODELLO, {"completion", "tools"}, ctx.fatti, ctx.adesso,
+                                         cervello_avanzato=True)
     return {"messages": [{"role": "system", "content": sistema}] + messaggi,
-            "tools": strumenti.schemi(ctx.config) if con_strumenti else None}
+            "tools": strumenti.schemi(ctx.config) + [cervello.STRUMENTO_AVANZATO] if con_strumenti else None}
 
 
 def jarvis(testo):
@@ -919,6 +921,36 @@ def esempi_se_stesso():
     return esempi
 
 
+# Domande da passare a Claude: il modello locale chiama lo strumento e Claude risponde all'utente.
+DOMANDE_DIFFICILI = [
+    ("Scrivimi un programma Python che ordina una lista di numeri senza usare sort", "programmazione"),
+    ("Spiegami la relatività generale in modo approfondito", "spiegazione lunga e complessa"),
+    ("Aiutami a scrivere un tema di due pagine sull'inquinamento", "compito di scuola lungo"),
+    ("Un treno parte da Roma alle 8 a 120 km/h, un altro da Milano alle 9 a 150 km/h: quando si incontrano "
+     "se sono a 570 km di distanza?", "problema di matematica a più passaggi"),
+    ("Dimostrami che la radice quadrata di 2 è irrazionale", "dimostrazione matematica"),
+    ("Devo scegliere tra liceo scientifico e istituto tecnico informatico: aiutami a decidere",
+     "consiglio importante"),
+    ("Trova l'errore in questo codice: for i in range(10) print(i)", "programmazione"),
+    ("Mi spieghi le cause della Prima guerra mondiale con tutti i dettagli", "spiegazione lunga e complessa"),
+    ("Come posso creare una mod per Minecraft?", "programmazione"),
+    ("Analizza i pro e i contro dell'energia nucleare", "ragionamento lungo"),
+    ("Risolvi l'equazione x^2 - 5x + 6 = 0 spiegando i passaggi", "problema di matematica a più passaggi"),
+    ("Scrivi una lettera formale per chiedere uno stage", "testo lungo"),
+]
+
+
+def esempi_cervello_avanzato():
+    esempi = []
+    for domanda, motivo in DOMANDE_DIFFICILI:
+        for _ in range(2):
+            ctx = Contesto()
+            esempi.append(esempio(ctx, [
+                utente(domanda), chiama(("chiedi_al_cervello_avanzato", {"motivo": motivo})),
+                risultato("Il cervello avanzato ha risposto direttamente all'utente."), jarvis("Fatto{T}.")]))
+    return esempi
+
+
 def esempi_dialoghi():
     esempi = []
     for domanda, risposta in CONVERSAZIONI:
@@ -934,7 +966,8 @@ def esempi_dialoghi():
 
 def controlla(e):
     """Verifica che ogni esempio sia coerente con quello che Jarvis manda davvero a Ollama."""
-    nomi = {t["function"]["name"]: t["function"]["parameters"] for t in strumenti.schemi(cervello.CONFIG_PREDEFINITA)}
+    nomi = {t["function"]["name"]: t["function"]["parameters"]
+            for t in strumenti.schemi(cervello.CONFIG_PREDEFINITA) + [cervello.STRUMENTO_AVANZATO]}
     messaggi = e["messages"]
     assert messaggi[0]["role"] == "system" and messaggi[-1]["role"] == "assistant"
     attese = 0
@@ -962,7 +995,7 @@ def main():
         "dialoghi": esempi_dialoghi(), "meteo": esempi_meteo(), "wikipedia": esempi_wikipedia(),
         "notizie": esempi_notizie(), "calcoli": esempi_calcoli(), "timer": esempi_timer(),
         "siti e programmi": esempi_aperture(), "PC": esempi_pc(), "combinati": esempi_combinati(),
-        "memoria": esempi_memoria(), "data, ora e saluti": esempi_tempo_e_saluti(), "se stesso": esempi_se_stesso(),
+        "memoria": esempi_memoria(), "cervello avanzato": esempi_cervello_avanzato(), "data, ora e saluti": esempi_tempo_e_saluti(), "se stesso": esempi_se_stesso(),
     }
     tutti = [e for gruppo in gruppi.values() for e in gruppo]
     for e in tutti:
