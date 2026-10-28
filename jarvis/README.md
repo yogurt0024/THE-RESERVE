@@ -192,7 +192,7 @@ Apri `config.json` con il Blocco note:
 | `compiti_in_background` | `false` per aspettare la risposta del cervello grande invece di continuare a parlare |
 | `diario`                | `false` per non tenere il diario delle conversazioni           |
 | `webcam`                | `false` per non usare mai la webcam                            |
-| `cartelle_documenti`    | le cartelle dove può leggere i documenti, per esempio `["C:\\Users\\Yogur\\Documents"]`; vuoto = Documenti, Desktop e Download |
+| `cartelle_documenti`    | le cartelle dove può leggere i documenti, per esempio `["C:\\Users\\Nome\\Documents"]`; vuoto = Documenti, Desktop e Download |
 | `briefing`              | `false` per non fare il briefing del mattino da solo            |
 | `ora_briefing`          | da che ora del mattino fare il briefing (predefinito `"07:30"`) |
 | `avvisi_pc`             | `false` per non avere avvisi su batteria, disco, temperatura e memoria |
