@@ -10,12 +10,16 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
   pure dopo averlo chiuso.
 - **Informazioni aggiornate da internet**: meteo, Wikipedia e notizie.
 - **Azioni sul PC**: apre siti, ricerche Google e programmi, fa calcoli esatti, imposta timer.
+- **Diagnostica del PC**: memoria, disco, temperatura della scheda video, batteria.
+- **Volume e musica**: alza, abbassa, muto, pausa, canzone successiva o precedente.
 - **Ragionamento profondo**: per le domande difficili pensa prima di rispondere (più lento, più preciso).
 - **Sa cosa sa fare**: chiedigli "cosa sai fare?" o "quali sono i tuoi limiti?".
+- **Un modello tutto suo**: puoi addestrare un modello che ha il carattere di Jarvis
+  (vedi [addestramento/README.md](addestramento/README.md)).
 
 Con il modello consigliato (`qwen3:4b-instruct`) usa gli strumenti **da solo**: basta chiedere
-"che tempo fa a Cagliari?", "chi era Leonardo da Vinci?", "apri youtube", "quanto fa 128 per 47?"
-o "metti un timer di 10 minuti per la pasta".
+"che tempo fa a Cagliari?", "chi era Leonardo da Vinci?", "apri youtube", "quanto fa 128 per 47?",
+"metti un timer di 10 minuti per la pasta", "come sta il PC?" o "alza il volume".
 
 ## Installazione
 
@@ -60,6 +64,7 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/apri <programma o sito>`    | per esempio `/apri blocco note` o `/apri youtube.com` |
 | `/calcola <conto>`            | per esempio `/calcola (12+3)*2`                     |
 | `/timer <minuti> [messaggio]` | per esempio `/timer 10 pasta`                       |
+| `/sistema`                    | diagnostica del PC (memoria, disco, scheda video)   |
 | `/ricorda <cosa>`             | salva un'informazione nella memoria permanente      |
 | `/memoria`                    | mostra cosa ricorda                                 |
 | `/dimentica <numero>`         | cancella un ricordo (`/dimentica tutto` li cancella tutti) |

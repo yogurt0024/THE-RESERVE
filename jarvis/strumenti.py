@@ -5,11 +5,16 @@ Il modello li usa da solo (se lo supporta); l'utente li richiama con /meteo, /wi
 """
 
 import ast
+import ctypes
 import json
 import math
 import operator
 import os
+import platform
 import re
+import shutil
+import subprocess
+import sys
 import threading
 import urllib.parse
 import urllib.request
@@ -62,17 +67,20 @@ def _scarica(url, parametri=None):
         raise ErroreStrumento("non riesco a collegarmi a internet.") from None
 
 
+def _gb(valore):
+    return f"{valore:.1f}".replace(".", ",") + " GB"
+
+
 def _gradi(valore):
-    return "n.d." if valore is None else f"{valore:.0f}°C"
+    return "n.d." if valore is None else f"{round(valore)}°C"
 
 
 def _numero(valore):
     """Scrive un numero all'italiana: 1.234.567 e 3,14."""
     if isinstance(valore, float) and valore.is_integer() and abs(valore) < 1e15:
         valore = int(valore)
-    if isinstance(valore, int):
-        return f"{valore:,}".replace(",", ".")
-    return f"{valore:.10g}".replace(".", ",")
+    testo = f"{valore:,}" if isinstance(valore, int) else f"{valore:,.10g}"
+    return testo.replace(",", " ").replace(".", ",").replace(" ", ".")
 
 
 def _durata(minuti):
@@ -283,6 +291,120 @@ def timer(minuti, messaggio, avvisa):
     return f"Timer di {_durata(minuti)} impostato: suonerà alle {scadenza:%H:%M:%S}."
 
 
+def _memoria_ram():
+    """(GB usati, GB totali), oppure None se non si riesce a leggerla."""
+    try:
+        if sys.platform == "win32":
+            class StatoMemoria(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong)] + [
+                    (nome, ctypes.c_ulonglong) for nome in (
+                        "ullTotalPhys", "ullAvailPhys", "ullTotalPageFile", "ullAvailPageFile",
+                        "ullTotalVirtual", "ullAvailVirtual", "ullAvailExtendedVirtual")]
+            stato = StatoMemoria()
+            stato.dwLength = ctypes.sizeof(stato)
+            if not ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(stato)):
+                return None
+            totale, libera = stato.ullTotalPhys, stato.ullAvailPhys
+        else:
+            pagina = os.sysconf("SC_PAGE_SIZE")
+            totale, libera = os.sysconf("SC_PHYS_PAGES") * pagina, os.sysconf("SC_AVPHYS_PAGES") * pagina
+    except (AttributeError, OSError, ValueError):
+        return None
+    return (totale - libera) / 1024**3, totale / 1024**3
+
+
+def _batteria():
+    """(percentuale, in carica) su Windows, None se non c'è una batteria."""
+    if sys.platform != "win32":
+        return None
+
+    class StatoAlimentazione(ctypes.Structure):
+        _fields_ = [("ACLineStatus", ctypes.c_ubyte), ("BatteryFlag", ctypes.c_ubyte),
+                    ("BatteryLifePercent", ctypes.c_ubyte), ("SystemStatusFlag", ctypes.c_ubyte),
+                    ("BatteryLifeTime", ctypes.c_ulong), ("BatteryFullLifeTime", ctypes.c_ulong)]
+
+    stato = StatoAlimentazione()
+    if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(stato)):
+        return None
+    if stato.BatteryFlag & 128 or stato.BatteryLifePercent == 255:  # 128 = nessuna batteria
+        return None
+    return stato.BatteryLifePercent, stato.ACLineStatus == 1
+
+
+def _ore_di_accensione():
+    try:
+        if sys.platform == "win32":
+            ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_ulonglong
+            return ctypes.windll.kernel32.GetTickCount64() / 3_600_000
+        with open("/proc/uptime") as f:
+            return float(f.read().split()[0]) / 3600
+    except (AttributeError, OSError, ValueError):
+        return None
+
+
+def _scheda_video():
+    """Dati della scheda NVIDIA letti con nvidia-smi (installato insieme ai driver)."""
+    try:
+        risultato = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,temperature.gpu,utilization.gpu",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),  # niente finestra nera su Windows
+        )
+        nome, usata, totale, temperatura, utilizzo = [p.strip() for p in risultato.stdout.splitlines()[0].split(",")]
+        return nome, int(usata) / 1024, int(totale) / 1024, int(temperatura), int(utilizzo)
+    except (OSError, subprocess.SubprocessError, IndexError, ValueError):
+        return None
+
+
+def diagnostica():
+    righe = [
+        f"Diagnostica del sistema ({datetime.now():%d/%m/%Y %H:%M})",
+        f"Sistema: {platform.system()} {platform.release()}, processore con {os.cpu_count()} core.",
+    ]
+    ore = _ore_di_accensione()
+    if ore is not None:
+        righe.append(f"Acceso da: {int(ore)} ore e {int(ore % 1 * 60)} minuti.")
+    ram = _memoria_ram()
+    if ram:
+        righe.append(f"Memoria RAM: {_gb(ram[0])} usati su {_gb(ram[1])} ({ram[0] / ram[1]:.0%}).")
+    disco = os.path.abspath(os.sep)
+    spazio = shutil.disk_usage(disco)
+    righe.append(f"Disco {disco}: {spazio.free / 1024**3:.0f} GB liberi su {spazio.total / 1024**3:.0f} GB.")
+    scheda = _scheda_video()
+    if scheda:
+        nome, usata, totale, temperatura, utilizzo = scheda
+        righe.append(f"Scheda video {nome}: {_gb(usata)} usati su {_gb(totale)}, "
+                     f"temperatura {temperatura}°C, utilizzo {utilizzo}%.")
+    batteria = _batteria()
+    if batteria:
+        righe.append(f"Batteria: {batteria[0]}%{' (in carica)' if batteria[1] else ''}.")
+    return "\n".join(righe)
+
+
+# Tasti multimediali di Windows: (codice del tasto, quante volte premerlo)
+_TASTI = {
+    "alza_volume": (0xAF, 5, "Ho alzato il volume."),
+    "abbassa_volume": (0xAE, 5, "Ho abbassato il volume."),
+    "muto": (0xAD, 1, "Ho attivato o disattivato l'audio."),
+    "play_pausa": (0xB3, 1, "Ho messo in pausa o fatto ripartire la riproduzione."),
+    "successiva": (0xB0, 1, "Sono passato alla traccia successiva."),
+    "precedente": (0xB1, 1, "Sono tornato alla traccia precedente."),
+}
+
+
+def multimedia(azione):
+    if azione not in _TASTI:
+        raise ErroreStrumento(f'azione "{azione}" sconosciuta. Possibili: {", ".join(_TASTI)}.')
+    if sys.platform != "win32":
+        raise ErroreStrumento("il controllo di volume e musica funziona solo su Windows.")
+    tasto, volte, frase = _TASTI[azione]
+    for _ in range(volte):
+        ctypes.windll.user32.keybd_event(tasto, 0, 0, 0)
+        ctypes.windll.user32.keybd_event(tasto, 0, 2, 0)  # 2 = tasto rilasciato
+    return frase
+
+
 def _schema(nome, descrizione, parametri, obbligatori):
     return {
         "type": "function",
@@ -332,6 +454,12 @@ def schemi(config):
                 {"minuti": {"type": "number", "description": "Dopo quanti minuti suonare (0.5 = 30 secondi)"},
                  "messaggio": _testo("Cosa ricordare all'utente allo scadere (facoltativo)")},
                 ["minuti"]),
+        _schema("diagnostica",
+                "Controlla lo stato del PC: memoria RAM, disco, scheda video (memoria e temperatura), "
+                "batteria e da quanto tempo è acceso.",
+                {}, []),
+        _schema("multimedia", "Controlla volume e musica del PC.",
+                {"azione": {"type": "string", "enum": list(_TASTI), "description": "Cosa fare"}}, ["azione"]),
     ]
     return elenco
 
@@ -352,6 +480,8 @@ def descrivi(nome, argomenti):
         "apri_programma": f"Apro {a.get('nome', '')}...",
         "calcola": f"Calcolo {a.get('espressione', '')}...",
         "timer": f"Imposto un timer di {durata}...",
+        "diagnostica": "Eseguo la diagnostica del sistema...",
+        "multimedia": "Comando a volume e musica...",
     }
     return frasi.get(nome, f"Uso lo strumento {nome}...")
 
@@ -377,6 +507,10 @@ def esegui(nome, argomenti, config, avvisa):
             return calcola(str(argomenti.get("espressione", "")))
         if nome == "timer":
             return timer(argomenti.get("minuti"), argomenti.get("messaggio"), avvisa)
+        if nome == "diagnostica":
+            return diagnostica()
+        if nome == "multimedia":
+            return multimedia(argomenti.get("azione"))
         raise ErroreStrumento(f"lo strumento {nome} non esiste.")
     except ErroreStrumento as e:
         return f"Errore: {e}"

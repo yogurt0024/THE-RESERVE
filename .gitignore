@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 jarvis/dati/
+jarvis/addestramento/*.gguf
+jarvis/addestramento/Modelfile

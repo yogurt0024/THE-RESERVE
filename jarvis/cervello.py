@@ -49,6 +49,7 @@ AIUTO = """Comandi:
 /apri <programma o sito> — per esempio /apri blocco note oppure /apri youtube.com
 /calcola <conto> — per esempio /calcola (12+3)*2
 /timer <minuti> [messaggio] — per esempio /timer 10 pasta
+/sistema — diagnostica del PC (memoria, disco, scheda video)
 /ricorda <cosa> — salva un'informazione nella memoria permanente
 /memoria — mostra cosa ricordo
 /dimentica <numero> — cancella un ricordo (/dimentica tutto li cancella tutti)
@@ -201,6 +202,53 @@ class PulitoreMarkdown:
         return uniti
 
 
+def prompt_di_sistema(config, modello, capacita, fatti, adesso=None):
+    """Le istruzioni che il modello riceve a ogni domanda (usate anche per creare il dataset di addestramento)."""
+    adesso = adesso or datetime.now()
+    righe = [
+        f"Sei {config['nome']}, l'assistente personale dell'utente, ispirato al J.A.R.V.I.S. di Iron Man: "
+        "cortese, preciso e con un pizzico di ironia.",
+        "Rispondi sempre in italiano, in modo chiaro e conciso, a meno che non ti venga chiesto di approfondire.",
+        'Scrivi testo semplice, senza tabelle, titoli o asterischi; per gli elenchi inizia le righe con "- ".',
+        "Se non conosci una risposta o non sei sicuro, dillo invece di inventare.",
+        f"Oggi è {strumenti.data_italiana(adesso)} e sono le {adesso:%H:%M}.",
+    ]
+    if config["come_chiamarmi"]:
+        righe.append(f'Chiama l\'utente "{config["come_chiamarmi"]}".')
+    if config["citta"]:
+        righe.append(f"L'utente vive a {config['citta']}: se chiede il meteo senza dire dove, intende lì.")
+    righe += [
+        "",
+        "Come funzioni (usalo se l'utente ti chiede cosa sai fare o quali sono i tuoi limiti):",
+        f"- Sei un programma che gira interamente sul PC dell'utente, con il modello {modello} tramite Ollama.",
+        "- Hai una memoria permanente: ricordi le cose che l'utente ti chiede di ricordare "
+        "e gli ultimi messaggi, anche dopo essere stato chiuso.",
+    ]
+    if "tools" in capacita:
+        righe.append(
+            "- Hai degli strumenti: "
+            + ("meteo, Wikipedia, notizie, " if config["internet"] else "")
+            + "aprire siti, aprire ricerche nel browser, aprire programmi, calcoli esatti, timer, "
+            "diagnostica del PC, volume e musica. "
+            "Usali quando servono, invece di inventare dati aggiornati o fare conti a mente."
+        )
+    else:
+        righe.append(
+            "- Non puoi usare strumenti da solo: per meteo, Wikipedia, notizie, calcoli, timer "
+            "e per aprire programmi l'utente può usare i comandi elencati da /aiuto."
+        )
+    if not config["internet"]:
+        righe.append("- Non sei collegato a internet.")
+    righe += [
+        "- Non puoi vedere lo schermo, sentire la voce dell'utente, né leggere o modificare file.",
+        "- Le tue conoscenze generali si fermano al tuo addestramento: per i fatti recenti servono gli strumenti.",
+    ]
+    if fatti:
+        righe += ["", "Cose che l'utente ti ha chiesto di ricordare (scritte in prima persona dall'utente):"]
+        righe += [f"- {f}" for f in fatti]
+    return "\n".join(righe)
+
+
 class Assistente:
     """Tiene la conversazione e la memoria e produce le risposte come eventi:
 
@@ -300,7 +348,8 @@ class Assistente:
     def stato(self):
         righe = [f"{self.nome} è pronto (modello {self.modello})."]
         if self.supporta_strumenti:
-            righe.append("Uso gli strumenti da solo: meteo, Wikipedia, notizie, siti, programmi, calcoli e timer.")
+            righe.append("Uso gli strumenti da solo: meteo, Wikipedia, notizie, siti, programmi, calcoli, timer, "
+                         "diagnostica del PC, volume e musica.")
         else:
             righe.append(
                 "Questo modello non sa usare gli strumenti da solo: usa i comandi (/aiuto), "
@@ -336,48 +385,7 @@ class Assistente:
         _scrivi_json(FILE_CONVERSAZIONE, {"messaggi": self.cronologia})
 
     def _prompt_di_sistema(self, modello):
-        adesso = datetime.now()
-        righe = [
-            f"Sei {self.nome}, l'assistente personale dell'utente, ispirato al J.A.R.V.I.S. di Iron Man: "
-            "cortese, preciso e con un pizzico di ironia.",
-            "Rispondi sempre in italiano, in modo chiaro e conciso, a meno che non ti venga chiesto di approfondire.",
-            'Scrivi testo semplice, senza tabelle, titoli o asterischi; per gli elenchi inizia le righe con "- ".',
-            "Se non conosci una risposta o non sei sicuro, dillo invece di inventare.",
-            f"Oggi è {strumenti.data_italiana(adesso)} e sono le {adesso:%H:%M}.",
-        ]
-        if self.config["come_chiamarmi"]:
-            righe.append(f'Chiama l\'utente "{self.config["come_chiamarmi"]}".')
-        if self.config["citta"]:
-            righe.append(f"L'utente vive a {self.config['citta']}: se chiede il meteo senza dire dove, intende lì.")
-        righe += [
-            "",
-            "Come funzioni (usalo se l'utente ti chiede cosa sai fare o quali sono i tuoi limiti):",
-            f"- Sei un programma che gira interamente sul PC dell'utente, con il modello {modello} tramite Ollama.",
-            "- Hai una memoria permanente: ricordi le cose che l'utente ti chiede di ricordare "
-            "e gli ultimi messaggi, anche dopo essere stato chiuso.",
-        ]
-        if "tools" in self.capacita.get(modello, ()):
-            righe.append(
-                "- Hai degli strumenti: "
-                + ("meteo, Wikipedia, notizie, " if self.config["internet"] else "")
-                + "aprire siti, aprire ricerche nel browser, aprire programmi, calcoli esatti e timer. "
-                "Usali quando servono, invece di inventare dati aggiornati o fare conti a mente."
-            )
-        else:
-            righe.append(
-                "- Non puoi usare strumenti da solo: per meteo, Wikipedia, notizie, calcoli, timer "
-                "e per aprire programmi l'utente può usare i comandi elencati da /aiuto."
-            )
-        if not self.config["internet"]:
-            righe.append("- Non sei collegato a internet.")
-        righe += [
-            "- Non puoi vedere lo schermo, sentire la voce dell'utente, né leggere o modificare file.",
-            "- Le tue conoscenze generali si fermano al tuo addestramento: per i fatti recenti servono gli strumenti.",
-        ]
-        if self.fatti:
-            righe += ["", "Cose che l'utente ti ha chiesto di ricordare (scritte in prima persona dall'utente):"]
-            righe += [f"- {f}" for f in self.fatti]
-        return "\n".join(righe)
+        return prompt_di_sistema(self.config, modello, self.capacita.get(modello, ()), self.fatti)
 
     # --- Conversazione ---
 
@@ -442,6 +450,8 @@ class Assistente:
                 yield ("info", strumenti.cerca_sul_web(argomento))
             elif nome == "calcola":
                 yield ("info", strumenti.calcola(argomento))
+            elif nome == "sistema":
+                yield ("info", strumenti.diagnostica())
             elif nome == "timer":
                 minuti, _, messaggio = argomento.partition(" ")
                 yield ("info", strumenti.timer(minuti, messaggio, self.avvisa))
