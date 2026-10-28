@@ -6,6 +6,7 @@
   "modello": "qwen3.5:4b",
   "modello_grande": "qwen3.6:35b-a3b",
   "ragionamento": false,
+  "compiti_in_background": true,
   "cervello": "locale",
   "modello_claude": "claude-opus-5-5",
   "sforzo_claude": "medium",

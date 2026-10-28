@@ -116,7 +116,12 @@ class CervelloClaude:
         `schemi` sono gli strumenti di Jarvis (None = nessuno strumento); `esegui(nome, argomenti)` li esegue.
         """
         self.costo_ultima_risposta = 0.0
-        messaggi = [{"role": m["role"], "content": m["content"]} for m in cronologia]
+        messaggi = []
+        for m in cronologia:
+            if messaggi and messaggi[-1]["role"] == m["role"]:  # per esempio il resoconto di un compito finito
+                messaggi[-1]["content"] += "\n\n" + m["content"]
+            else:
+                messaggi.append({"role": m["role"], "content": m["content"]})
         while messaggi and messaggi[0]["role"] != "user":  # la conversazione deve iniziare dall'utente
             messaggi.pop(0)
         errori_json = 0

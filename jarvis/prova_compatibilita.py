@@ -22,13 +22,15 @@ PROVE = [
     ("anthropic", "import anthropic; print(anthropic.__version__)", "cervello avanzato (Claude)"),
     ("sounddevice", "import sounddevice as s; print('microfono:', s.query_devices(kind='input')['name'])",
      "microfono e altoparlanti"),
-    ("faster-whisper", "import faster_whisper; print(faster_whisper.__version__)", "capire la voce"),
+    ("onnx-asr[cpu,hub]", "import onnx_asr, onnxruntime; print('onnxruntime', onnxruntime.__version__)",
+     "capire la voce"),
     ("openwakeword", "import openwakeword; print('ok')", "parola di attivazione \"Jarvis\""),
     ("piper-tts", "import piper; print('ok')", "voce di Jarvis"),
     ("opencv-python", "import cv2; print(cv2.__version__)", "webcam"),
 ]
 # Come si presenta un blocco del Controllo intelligente delle app (WinError 4551).
-SEGNI_DI_BLOCCO = ("4551", "controllo applicazioni", "controllo delle applicazioni", "application control")
+SEGNI_DI_BLOCCO = ("4551", "controllo applicazioni", "controllo delle applicazioni",
+                   "controllo dell'applicazione", "criterio di controllo", "application control")
 
 
 def comando(argomenti, secondi):

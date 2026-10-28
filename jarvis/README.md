@@ -12,6 +12,8 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 - **Azioni sul PC**: apre siti, ricerche Google e programmi, fa calcoli esatti, imposta timer.
 - **Diagnostica del PC**: memoria, disco, temperatura della scheda video, batteria.
 - **Volume e musica**: alza, abbassa, muto, pausa, canzone successiva o precedente.
+- **Lavora in background**: i lavori lunghi li svolge mentre tu fai altro, e quando ha finito ti avvisa
+  con una notifica di Windows (vedi [Compiti in background](#compiti-in-background)).
 - **Ragionamento profondo**: per le domande difficili pensa prima di rispondere (più lento, più preciso).
 - **Sa cosa sa fare**: chiedigli "cosa sai fare?" o "quali sono i tuoi limiti?".
 - **Due cervelli sul tuo PC**: uno veloce per tutto il resto e uno grande per le domande difficili,
@@ -73,6 +75,8 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/ricorda <cosa>`             | salva un'informazione nella memoria permanente      |
 | `/memoria`                    | mostra cosa ricorda                                 |
 | `/dimentica <numero>`         | cancella un ricordo (`/dimentica tutto` li cancella tutti) |
+| `/compiti`                    | i compiti in background e a che punto sono          |
+| `/annulla <numero>`           | ferma un compito in background                      |
 | `/pensa`                      | attiva o spegne il ragionamento profondo            |
 | `/cervello <modalità>`        | `locale`, `ibrido` o `claude` (vedi sotto)          |
 | `/chiave`                     | inserisci la chiave API di Claude                   |
@@ -98,6 +102,7 @@ Apri `config.json` con il Blocco note:
 | `modello`               | il modello per le risposte normali (vedi sotto)                 |
 | `modello_grande`        | il cervello grande per le domande difficili; vuoto = nessuno   |
 | `ragionamento`          | `true` per avere il ragionamento profondo già attivo all'avvio  |
+| `compiti_in_background` | `false` per aspettare la risposta del cervello grande invece di continuare a parlare |
 | `cervello`              | `"locale"`, `"ibrido"` o `"claude"` (vedi sotto)                |
 | `modello_claude`        | quale modello di Claude usare (predefinito `claude-opus-5-5`)   |
 | `sforzo_claude`         | quanto ragiona Claude: `low`, `medium`, `high` (più alto = più preciso e più caro) |
@@ -137,20 +142,38 @@ Il cervello grande è un modello "MoE": è enorme, ma per ogni parola ne usa sol
 per questo gira anche sul tuo PC. È più lento del veloce (qualche secondo per iniziare, poi alcune parole
 al secondo) e occupa molta RAM: **mentre giochi chiudi Jarvis**, così la memoria torna libera.
 
-Il cervello veloce decide da solo quando una domanda è difficile e la passa al grande
-("Passo la domanda al cervello grande..."). Con **Ragionamento profondo** attivo risponde sempre il grande,
-e ragiona prima di rispondere.
+Il cervello veloce decide da solo quando una domanda è difficile e la passa al grande, che ci lavora
+**in background** (vedi sotto). Con **Ragionamento profondo** attivo risponde sempre il grande, e ragiona
+prima di rispondere.
 
 Per cambiare modello: `ollama pull nome-modello` nel Prompt dei comandi, poi cambia `modello` o
 `modello_grande` in `config.json`. Alcuni modelli ragionano sempre, anche quando non serve: Jarvis
 nasconde quel ragionamento.
+
+## Compiti in background
+
+Jarvis può lavorare a una cosa mentre tu fai altro, anche mentre continui a parlargli:
+
+- **Da solo**: quando il cervello veloce capisce che una domanda è difficile o lunga, risponde subito
+  "Me ne occupo, signore: la avviso appena ho finito." e la passa al cervello grande.
+- **Quando lo chiedi tu**: inizia o finisci la richiesta con **"in background"** (o "in sottofondo"), per
+  esempio *"in background cercami le novità sul nuovo aggiornamento di Minecraft"*.
+
+Puoi affidargli più compiti: li svolge uno dopo l'altro, perché il cervello grande occupa quasi tutta la
+memoria del PC. Quando un compito finisce, Jarvis scrive il resoconto nella conversazione e manda una
+**notifica di Windows**, così lo vedi anche se la finestra è nascosta (non durante "Non disturbare").
+Il resoconto entra nella conversazione: puoi chiedergli altro su quello che ha trovato.
+
+`/compiti` mostra i compiti e a che punto sono; `/annulla 2` ferma il compito numero 2.
+Il primo compito ci mette un po' di più a partire: il cervello grande deve caricarsi in memoria.
+Quando chiudi Jarvis, i compiti non ancora finiti si fermano.
 
 ### Le tre modalità (`/cervello ...`)
 
 | Modalità  | Come funziona                                                                              |
 |-----------|--------------------------------------------------------------------------------------------|
 | `locale`  | **predefinita**: cervello veloce e cervello grande, tutto sul PC, gratis e privato         |
-| `ibrido`  | cervello veloce sul PC; le domande difficili e il ragionamento profondo passano a Claude    |
+| `ibrido`  | cervello veloce sul PC; le domande difficili e il ragionamento profondo passano a Claude (i compiti in background restano al cervello grande) |
 | `claude`  | risponde sempre Claude                                                                     |
 
 ### Claude (riserva opzionale)
@@ -173,10 +196,11 @@ anche **cercare sul web** davvero, se la ricerca web è attiva nelle impostazion
 ## Prova di compatibilità
 
 Le prossime funzioni (voce, parola "Jarvis", webcam) hanno bisogno di librerie che il Controllo
-intelligente delle app di Windows potrebbe bloccare. Per scoprirlo, nella cartella `jarvis`:
+intelligente delle app di Windows potrebbe bloccare, e che esistono solo per Python 3.12 (non ancora per
+le versioni più nuove). Per scoprirlo, nella cartella `jarvis`:
 
 ```
-python prova_compatibilita.py
+py -3.12 prova_compatibilita.py
 ```
 
 Ci vogliono 5-15 minuti. Alla fine il riepilogo è in `dati/compatibilita.txt`: copialo e mandalo.

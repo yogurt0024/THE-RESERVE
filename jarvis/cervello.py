@@ -4,7 +4,9 @@ Lo usano sia la finestra grafica (finestra.py) sia la modalità testo (jarvis.py
 """
 
 import json
+import queue
 import re
+import threading
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -28,6 +30,7 @@ CONFIG_PREDEFINITA = {
     "modello_grande": "qwen3.6:35b-a3b",
     "ragionamento": False,
     "cervello": "locale",
+    "compiti_in_background": True,
     "modello_claude": "claude-opus-5-5",
     "sforzo_claude": "medium",
     "mostra_costi": True,
@@ -65,9 +68,12 @@ AIUTO = """Comandi:
 /cervello locale, ibrido o claude — locale: tutto sul PC; ibrido: Claude per le cose difficili
 /chiave — inserisci la chiave API di Claude
 /costi — quanto hai speso con Claude
+/compiti — i compiti in background e a che punto sono
+/annulla <numero> — ferma un compito in background
 /nuova — nuova conversazione
 /esci — chiude
-Puoi anche chiedere normalmente, per esempio "che tempo fa a Cagliari?" o "ricordati che...\""""
+Puoi anche chiedere normalmente, per esempio "che tempo fa a Cagliari?", "ricordati che..." oppure
+"in background cerca i migliori modpack per giocare in due\""""
 
 # Ollama gira sullo stesso PC: niente proxy di sistema in mezzo.
 _connessione = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -77,13 +83,33 @@ _connessione = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 STRUMENTO_AVANZATO = {"type": "function", "function": {
     "name": "chiedi_al_cervello_avanzato",
     "description": "Passa la domanda al cervello avanzato, un'intelligenza artificiale molto più potente di te, che "
-                   "risponderà direttamente all'utente. Usalo per domande difficili, ragionamenti lunghi, problemi di "
-                   "matematica o logica, consigli importanti, programmazione, compiti di scuola complessi, o quando "
+                   "risponderà direttamente all'utente (spesso lavorando in background). Usalo per domande difficili, "
+                   "lavori lunghi come ricerche, confronti, analisi e testi da scrivere, ragionamenti lunghi, problemi "
+                   "di matematica o logica, consigli importanti, programmazione, compiti di scuola complessi, o quando "
                    "non sei sicuro della risposta. Non usarlo per saluti, chiacchiere, meteo, calcoli semplici, "
                    "timer o per aprire programmi.",
     "parameters": {"type": "object", "properties": {
         "motivo": {"type": "string", "description": "Perché serve il cervello avanzato"}}, "required": []},
 }}
+
+
+ISTRUZIONI_COMPITO = (
+    "Stai svolgendo in background un compito che l'utente ti ha affidato mentre fa altro. Usa gli strumenti che "
+    "servono, poi scrivi un resoconto chiaro di cosa hai trovato, fatto o risolto: vai dritto al risultato, senza "
+    "premesse. Se non sei riuscito a completarlo, spiega cosa manca."
+)
+
+
+class Compito:
+    """Un lavoro che il cervello grande porta avanti in background mentre l'utente fa altro."""
+
+    def __init__(self, numero, descrizione, contesto):
+        self.numero = numero
+        self.descrizione = descrizione
+        self.contesto = contesto  # gli ultimi messaggi della conversazione, per capire la richiesta
+        self.stato = "in coda"  # poi "in corso", "completato", "annullato" o "errore"
+        self.risultato = ""
+        self.stop = threading.Event()
 
 
 class ErroreOllama(Exception):
@@ -312,8 +338,9 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
             "e per aprire programmi l'utente può usare i comandi elencati da /aiuto."
         )
     if cervello_avanzato:
-        righe.append("- Per le domande difficili puoi passare la parola al cervello avanzato, un modello molto più "
-                     "potente di te, con lo strumento chiedi_al_cervello_avanzato.")
+        righe.append("- Per le domande difficili e i lavori lunghi passa il lavoro al cervello avanzato, un modello "
+                     "molto più potente di te, con lo strumento chiedi_al_cervello_avanzato: spesso lavora in "
+                     "background, e l'utente riceve un avviso quando ha finito.")
     if not config["internet"]:
         righe.append("- Non sei collegato a internet.")
     righe += [
@@ -334,13 +361,21 @@ class Assistente:
     ("pensiero",)                il modello sta ragionando
     ("ritira",)                  togliere il testo della risposta mostrato finora (era un ragionamento)
     ("pulisci",)                 la conversazione è stata cancellata
+
+    I compiti in background finiscono su un altro thread: `al_termine(compito)` avvisa l'interfaccia.
     """
 
-    def __init__(self, config, avvisa=print):
+    def __init__(self, config, avvisa=print, al_termine=None):
         self.config = config
         self.nome = config["nome"]
         self.modello = config["modello"]
         self.avvisa = avvisa  # chiamata dai timer, da un altro thread
+        self.al_termine = al_termine
+        self.compiti = []
+        self._coda_compiti = queue.Queue()
+        self._lavoratore = None
+        self._lucchetto = threading.Lock()
+        self._risultati_da_aggiungere = []  # resoconti dei compiti finiti, da mettere nella conversazione
         self.ragionamento = bool(config["ragionamento"])
         self.limite = max(2, int(config["messaggi_da_ricordare"]))
         self.capacita = {}  # modello → cosa sa fare secondo Ollama ("tools", "thinking", ...)
@@ -358,6 +393,7 @@ class Assistente:
                                           re.IGNORECASE)
         self._non_chiamarmi_frase = re.compile(r"\bnon\s+chiamarmi\s+(?:più\s+)?", re.IGNORECASE)
         self._dai_del_frase = re.compile(r"\bdammi\s+(?:pure\s+)?del\s+(tu|lei)\b", re.IGNORECASE)
+        self._in_background_frase = re.compile(r"\bin (?:background|sottofondo)\b", re.IGNORECASE)
 
     # --- Ollama ---
 
@@ -438,6 +474,14 @@ class Assistente:
             self._carica(self._modello_attuale())
 
     def chiudi(self):
+        for compito in self.compiti_attivi():
+            compito.stop.set()
+        with self._lucchetto:  # i resoconti non ancora letti restano nella conversazione salvata
+            if self._risultati_da_aggiungere:
+                self.cronologia += self._risultati_da_aggiungere
+                self._risultati_da_aggiungere.clear()
+                del self.cronologia[:-self.limite]
+                self._salva_conversazione()
         # Libera la memoria della scheda video, così resta tutta per i giochi.
         for modello in self.capacita:
             try:
@@ -531,7 +575,8 @@ class Assistente:
         cambio = self._cambia_modo_di_parlare(testo)
         if cambio:
             yield ("info", cambio)
-        yield from self._chiedi(testo, stop)
+        in_background = bool(self._in_background_frase.search(testo)) and not testo.endswith("?")
+        yield from self._chiedi(testo, stop, in_background=in_background)
 
     def _cambia_modo_di_parlare(self, testo):
         """Riconosce "chiamami capo", "non chiamarmi più signore", "dammi del tu"."""
@@ -631,6 +676,19 @@ class Assistente:
                     problema = "" if self.claude.pronto or argomento == "locale" else \
                         f" Però Claude non è disponibile: {self.claude.problema}."
                     yield ("info", f"Cervello {argomento}: {spiegazione}{problema}{avviso}")
+            elif nome == "compiti":
+                if not self.compiti:
+                    yield ("info", "Nessun compito in background. Per affidarmene uno: \"in background ...\"")
+                else:
+                    yield ("info", "\n".join(f"{c.numero}. [{c.stato}] {c.descrizione}" for c in self.compiti))
+            elif nome == "annulla":
+                compito = next((c for c in self.compiti if str(c.numero) == argomento), None)
+                if compito is None or compito.stato not in ("in coda", "in corso"):
+                    yield ("info", f"Nessun compito {argomento} da fermare: /compiti li mostra tutti.")
+                else:
+                    compito.stato = "annullato"
+                    compito.stop.set()
+                    yield ("info", f"Compito {compito.numero} annullato.")
             elif nome in ("meteo", "wiki", "notizie"):
                 return (yield from self._comando_internet(nome, argomento))
             elif nome == "apri":
@@ -686,13 +744,19 @@ class Assistente:
             return f"Ho dimenticato: {fatto}"
         return "Scrivi il numero del ricordo da cancellare (lo vedi con /memoria), oppure /dimentica tutto."
 
-    def _chiedi(self, domanda, stop, con_strumenti=True):
-        self.cronologia.append({"role": "user", "content": domanda})
+    def _chiedi(self, domanda, stop, con_strumenti=True, in_background=False):
+        with self._lucchetto:
+            self.cronologia += self._risultati_da_aggiungere
+            self._risultati_da_aggiungere.clear()
+        messaggio = {"role": "user", "content": domanda}
+        self.cronologia.append(messaggio)
         pulitore = PulitoreMarkdown()
         risposta = []  # testo pulito, per la cronologia
         interrotto = False
         try:
-            if self._usa_claude():
+            if in_background:
+                yield from self._affida_compito(domanda, pulitore, risposta)
+            elif self._usa_claude():
                 yield from self._con_claude(pulitore, risposta, stop, con_strumenti)
             else:
                 yield from self._con_ollama(pulitore, risposta, stop, con_strumenti)
@@ -705,35 +769,46 @@ class Assistente:
             if testo:
                 self.cronologia.append({"role": "assistant", "content": testo + (" [interrotta]" if interrotto else "")})
             else:
-                self.cronologia.pop()
+                self.cronologia = [m for m in self.cronologia if m is not messaggio]
             del self.cronologia[:-self.limite]
             self._salva_conversazione()
 
     def _con_ollama(self, pulitore, risposta, stop, con_strumenti, modello=None):
         modello = modello or self._modello_attuale()
-        capacita = self.capacita.get(modello, set())
         avanzato = None if modello == self.modello_grande else self._cervello_avanzato()
         messaggi = [{"role": "system", "content": self._prompt_di_sistema(modello)}] + self.cronologia
+        passa = yield from self._ciclo(modello, messaggi, pulitore, risposta, stop, con_strumenti, avanzato,
+                                       pensa=self.ragionamento)
+        if not passa:
+            return
+        domanda = self.cronologia[-1]["content"]
+        if avanzato == "claude":
+            yield ("info", "Passo la domanda al cervello avanzato (Claude)...")
+            yield from self._con_claude(pulitore, risposta, stop, con_strumenti)
+        elif self.config["compiti_in_background"]:
+            yield from self._affida_compito(domanda, pulitore, risposta)
+        else:
+            yield ("info", f"Passo la domanda al cervello grande ({self.modello_grande})...")
+            yield from self._con_ollama(pulitore, risposta, stop, con_strumenti, modello=self.modello_grande)
+
+    def _ciclo(self, modello, messaggi, pulitore, risposta, stop, con_strumenti, avanzato, pensa):
+        """Domanda e risposta con Ollama, strumenti compresi.
+
+        Restituisce True se il modello vuole passare la domanda al cervello avanzato.
+        """
+        capacita = self.capacita.get(modello, set())
         for giro in range(GIRI_STRUMENTI + 1):
             dati = {"model": modello, "messages": messaggi, "stream": True, "options": {"num_ctx": CONTESTO}}
             if "thinking" in capacita:
-                dati["think"] = self.ragionamento or modello in self.pensa_sempre
+                dati["think"] = pensa or modello in self.pensa_sempre
             if con_strumenti and "tools" in capacita and giro < GIRI_STRUMENTI:
-                dati["tools"] = strumenti.schemi(self.config)
-                if avanzato:
-                    dati["tools"].append(STRUMENTO_AVANZATO)
+                dati["tools"] = strumenti.schemi(self.config) + ([STRUMENTO_AVANZATO] if avanzato else [])
             contenuto, chiamate = yield from self._flusso(dati, pulitore, risposta, stop)
             if not chiamate:
-                return
+                return False
             yield from self._emetti(pulitore.a_capo(), risposta)
             if avanzato and any(c.get("function", {}).get("name") == "chiedi_al_cervello_avanzato" for c in chiamate):
-                if avanzato == "claude":
-                    yield ("info", "Passo la domanda al cervello avanzato (Claude)...")
-                    yield from self._con_claude(pulitore, risposta, stop, con_strumenti)
-                else:
-                    yield ("info", f"Passo la domanda al cervello grande ({self.modello_grande})...")
-                    yield from self._con_ollama(pulitore, risposta, stop, con_strumenti, modello=self.modello_grande)
-                return
+                return True
             messaggi.append({"role": "assistant", "content": contenuto, "tool_calls": chiamate})
             for chiamata in chiamate:
                 funzione = chiamata.get("function", {})
@@ -748,6 +823,72 @@ class Assistente:
                 yield ("info", strumenti.descrivi(nome, argomenti))
                 risultato = strumenti.esegui(nome, argomenti, self.config, self.avvisa)
                 messaggi.append({"role": "tool", "content": risultato, "tool_name": nome})
+        return False
+
+    # --- Compiti in background ---
+
+    def _affida_compito(self, descrizione, pulitore, risposta):
+        """Mette il lavoro in coda per il cervello grande e risponde subito all'utente."""
+        compito = self.avvia_compito(descrizione, self.cronologia[:-1][-6:])
+        titolo = self.config["come_chiamarmi"]
+        t = f", {titolo}" if titolo else ""
+        avviso = "ti avviso" if self.config["dai_del"] == "tu" else "la avviso"
+        yield from self._emetti(pulitore.aggiungi(f"Me ne occupo{t}: {avviso} appena ho finito."), risposta)
+        cervello = self.modello_grande or self.modello
+        attesa = "" if len(self.compiti_attivi()) <= 1 else f", dopo {len(self.compiti_attivi()) - 1} in coda"
+        yield ("info", f"Compito {compito.numero} affidato al cervello {cervello}{attesa}. /compiti per vederlo.")
+
+    def avvia_compito(self, descrizione, contesto=()):
+        with self._lucchetto:
+            compito = Compito(len(self.compiti) + 1, descrizione, [dict(m) for m in contesto])
+            self.compiti.append(compito)
+            if self._lavoratore is None or not self._lavoratore.is_alive():
+                self._lavoratore = threading.Thread(target=self._lavora_ai_compiti, daemon=True)
+                self._lavoratore.start()
+        self._coda_compiti.put(compito)
+        return compito
+
+    def compiti_attivi(self):
+        return [c for c in self.compiti if c.stato in ("in coda", "in corso")]
+
+    def _lavora_ai_compiti(self):
+        # Un compito alla volta: il cervello grande usa quasi tutta la memoria del PC.
+        while True:
+            compito = self._coda_compiti.get()
+            if compito.stato != "in coda":
+                continue
+            compito.stato = "in corso"
+            try:
+                risultato = self._esegui_compito(compito)
+                if compito.stop.is_set():  # annullato proprio mentre finiva
+                    raise _Interrotto
+                compito.risultato = risultato or "Non sono riuscito a ottenere un risultato."
+                compito.stato = "completato"
+            except _Interrotto:
+                compito.stato = "annullato"
+                continue
+            except ErroreOllama as e:
+                compito.stato, compito.risultato = "errore", str(e)
+            except Exception as e:  # un compito andato storto non deve fermare quelli dopo
+                compito.stato, compito.risultato = "errore", f"Errore imprevisto: {e}"
+            with self._lucchetto:
+                self._risultati_da_aggiungere.append({"role": "assistant", "content": (
+                    f"(Compito in background {compito.numero}, {compito.stato}: {compito.descrizione})\n"
+                    f"{compito.risultato}")})
+            if self.al_termine:
+                self.al_termine(compito)
+
+    def _esegui_compito(self, compito):
+        modello = self.modello_grande or self.modello
+        sistema = self._prompt_di_sistema(modello) + "\n\n" + ISTRUZIONI_COMPITO
+        messaggi = ([{"role": "system", "content": sistema}] + compito.contesto
+                    + [{"role": "user", "content": f"Compito da svolgere: {compito.descrizione}"}])
+        pulitore, risposta = PulitoreMarkdown(), []
+        # Il compito non ha fretta: il modello può ragionare con calma prima di rispondere.
+        for _ in self._ciclo(modello, messaggi, pulitore, risposta, compito.stop, True, None, pensa=True):
+            pass
+        risposta += [testo for testo, _ in pulitore.fine()]
+        return "".join(risposta).strip()
 
     def _con_claude(self, pulitore, risposta, stop, con_strumenti):
         sistema = self._prompt_di_sistema(self.claude.modello)

@@ -10,6 +10,7 @@ import threading
 import tkinter as tk
 from tkinter import messagebox, simpledialog
 
+import notifiche
 from cervello import SEPARATORE_DATI, Assistente, ErroreOllama, carica_config
 
 COLORI = {
@@ -43,7 +44,9 @@ class Finestra:
         self.a_capo = True
         self.etichetta_scritta = False
         self.fase = 0
-        self.assistente = Assistente(config, avvisa=lambda messaggio: self.eventi.put(("avviso", messaggio)))
+        self.compiti_da_mostrare = []  # finiti mentre Jarvis stava rispondendo ad altro
+        self.assistente = Assistente(config, avvisa=lambda messaggio: self.eventi.put(("avviso", messaggio)),
+                                     al_termine=lambda compito: self.eventi.put(("compito", compito)))
 
         self.root = tk.Tk()
         self.root.title(self.nome)
@@ -223,7 +226,28 @@ class Finestra:
         if occupato:
             self.stop.clear()
         self.pulsante.configure(text="Ferma" if occupato else "Invia")
-        self.stato.configure(text="sto elaborando..." if occupato else "pronto")
+        self._aggiorna_stato()
+
+    def _aggiorna_stato(self):
+        if self.occupato:
+            testo = "sto elaborando..."
+        else:
+            testo = "pronto"
+        attivi = len(self.assistente.compiti_attivi())
+        if attivi:
+            testo += f" · {attivi} {'compito' if attivi == 1 else 'compiti'} in background"
+        self.stato.configure(text=testo)
+
+    def _mostra_compito(self, compito):
+        esito = {"completato": "completato", "errore": "non riuscito"}.get(compito.stato, compito.stato)
+        if not self.a_capo:
+            self._scrivi("\n")
+        self._scrivi(f"{self.nome} · compito {compito.numero} {esito}\n", "jarvis")
+        self._scrivi(f"{compito.descrizione}\n", "info")
+        self._scrivi(compito.risultato + "\n")
+        self.root.bell()
+        notifiche.mostra(f"{self.nome}: compito {compito.numero} {esito}", compito.risultato)
+        self._aggiorna_stato()
 
     def _cambia_ragionamento(self):
         self.assistente.ragionamento = self.ragionamento.get()
@@ -263,9 +287,18 @@ class Finestra:
         elif tipo == "avviso":
             self._riga(f"⏰ {evento[1]}", "avviso")
             self.root.bell()
+            notifiche.mostra(self.nome, evento[1])
             self._in_primo_piano()
+        elif tipo == "compito":
+            if self.occupato:
+                self.compiti_da_mostrare.append(evento[1])
+            else:
+                self._mostra_compito(evento[1])
         elif tipo == "fatto":
             self._occupa(False)
+            for compito in self.compiti_da_mostrare:
+                self._mostra_compito(compito)
+            self.compiti_da_mostrare.clear()
             self.ragionamento.set(self.assistente.ragionamento)
             if not self.a_capo:
                 self._scrivi("\n")

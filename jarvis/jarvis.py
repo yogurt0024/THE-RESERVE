@@ -8,6 +8,7 @@ Le impostazioni (nome, modello, città, ...) sono in config.json.
 import getpass
 import sys
 
+import notifiche
 from cervello import Assistente, ErroreOllama, carica_config
 
 
@@ -53,7 +54,17 @@ def mostra(eventi, nome):
 
 def terminale(config):
     nome = config["nome"]
-    assistente = Assistente(config, avvisa=lambda messaggio: print(f"\n» {messaggio}\a\nTu: ", end="", flush=True))
+    def avvisa(messaggio):
+        print(f"\n» {messaggio}\a\nTu: ", end="", flush=True)
+        notifiche.mostra(nome, messaggio)
+
+    def al_termine(compito):
+        esito = {"completato": "completato", "errore": "non riuscito"}.get(compito.stato, compito.stato)
+        print(f"\n» Compito {compito.numero} {esito}: {compito.descrizione}\n{nome}: {compito.risultato}\a\n\nTu: ",
+              end="", flush=True)
+        notifiche.mostra(f"{nome}: compito {compito.numero} {esito}", compito.risultato)
+
+    assistente = Assistente(config, avvisa=avvisa, al_termine=al_termine)
     print(f"Avvio di {nome} con il modello {config['modello']}...")
     try:
         assistente.avvia()

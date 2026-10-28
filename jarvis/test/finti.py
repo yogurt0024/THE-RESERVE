@@ -71,9 +71,14 @@ class FintoOllama(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/x-ndjson")
         self.end_headers()
-        for parte in parti:
-            self.wfile.write((json.dumps(parte) + "\n").encode())
-            self.wfile.flush()
+        try:
+            for parte in parti:
+                self.wfile.write((json.dumps(parte) + "\n").encode())
+                self.wfile.flush()
+                if "lento" in domanda:  # per provare ad annullare un compito mentre è in corso
+                    time.sleep(0.5)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # Jarvis ha smesso di leggere: il compito è stato annullato
 
 
 class FintoClaude(BaseHTTPRequestHandler):
