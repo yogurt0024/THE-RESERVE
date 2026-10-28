@@ -6,3 +6,4 @@ sounddevice
 onnx-asr[cpu]
 piper-tts
 anthropic
+tzdata

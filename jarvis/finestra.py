@@ -19,6 +19,7 @@ from tkinter import messagebox, simpledialog
 import aggiorna
 import ascolto
 import iniziativa
+import integrazioni
 import notifiche
 import scarica
 import voce
@@ -68,7 +69,9 @@ class Finestra:
                               al_cambio=lambda parla: self.eventi.put(("parlando", parla)))
         self.sorvegliante = iniziativa.Sorvegliante(
             config, avvisa=lambda messaggio: self.eventi.put(("avviso", messaggio)), proponi=self._proponi,
-            in_gioco=lambda: self.assistente.modalita_gioco, scrivi_diario=self.assistente.scrivi_diari)
+            in_gioco=lambda: self.assistente.modalita_gioco, scrivi_diario=self.assistente.scrivi_diari,
+            cambia_gioco=lambda attiva, gioco: self.eventi.put(("gioco_automatico", attiva, gioco)),
+            saluta=lambda testo: self.eventi.put(("saluto", testo)))
         self.orecchio = self._nuovo_orecchio()
         self.orecchio_avviato = False
         self.stato_ascolto = ""
@@ -367,6 +370,7 @@ class Finestra:
         self._scrivi(compito.risultato + "\n")
         self.root.bell()
         notifiche.mostra(f"{self.nome}: compito {compito.numero} {esito}", compito.risultato)
+        self.sorvegliante.annota(f"Compito {compito.numero} {esito} ({compito.descrizione}): {compito.risultato}")
         if self.config["parla"] != "mai":
             if compito.stato == "completato":
                 annuncio = f"Ho terminato il compito {compito.numero}{self._t()}. {compito.risultato}"
@@ -498,6 +502,21 @@ class Finestra:
 
         threading.Thread(target=cambia, daemon=True).start()
 
+    def _gioco_automatico(self, attiva, gioco):
+        """Un gioco si è aperto (o chiuso): la modalità gioco si accende (o si spegne) da sola."""
+        def cambia():
+            esito = self.assistente.imposta_modalita_gioco(attiva)
+            self.eventi.put(("info", esito))
+            self.eventi.put(("stato_voce", self.stato_voce))
+
+        threading.Thread(target=cambia, daemon=True).start()
+        self.gioco.set(attiva)
+        if self.config["parla"] != "mai":
+            nome_gioco = integrazioni.nome_del_gioco(gioco)
+            self.voce.di(f"Modalità gioco attiva{self._t()}. Buona partita." if attiva and not nome_gioco else
+                         f"Vedo {nome_gioco}: modalità gioco attiva{self._t()}. Buona partita." if attiva else
+                         f"Partita finita{self._t()}: torno a pieno regime.")
+
     def _cambia_ragionamento(self):
         self.assistente.ragionamento = self.ragionamento.get()
 
@@ -551,6 +570,7 @@ class Finestra:
             self._riga(f"⏰ {evento[1]}", "avviso")
             self.root.bell()
             notifiche.mostra(self.nome, evento[1])
+            self.sorvegliante.annota(evento[1])
             if self.config["parla"] != "mai":
                 self.voce.di(self._avviso_a_voce(evento[1]))
             else:
@@ -587,6 +607,12 @@ class Finestra:
             self._occupa(False)
             self.campo.focus_set()
             self._comando_rimasto()
+        elif tipo == "gioco_automatico":
+            self._gioco_automatico(evento[1], evento[2])
+        elif tipo == "saluto":
+            self._messaggio(self.nome, evento[1], "jarvis")
+            if self.config["parla"] != "mai":
+                self.voce.di(evento[1])
         elif tipo == "avvia_orecchio":
             self._avvia_orecchio()
         elif tipo == "comando_vocale":

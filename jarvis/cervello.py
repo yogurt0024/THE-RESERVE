@@ -16,6 +16,7 @@ from pathlib import Path
 
 import aggiorna
 import cervello_claude
+import integrazioni
 import promemoria
 import ricordi
 import schermo
@@ -55,6 +56,15 @@ CONFIG_PREDEFINITA = {
     "consigli_pausa": True,
     "attenzione": "normale",
     "attenzione_in_gioco": False,
+    "gioco_automatico": True,
+    "giochi": [],
+    "saluto_al_ritorno": True,
+    "presenza_webcam": False,
+    "calendario_ics": "",
+    "server_minecraft": "",
+    "telefono_ntfy": "",
+    "server_ntfy": "https://ntfy.sh",
+    "avvisi_al_telefono": True,
     "emozione_voce": 0.6,
     "voce_riferimento": "",
     "voce_elevenlabs": "",
@@ -88,7 +98,11 @@ AIUTO = """Comandi:
 /calcola <conto> — per esempio /calcola (12+3)*2
 /timer <minuti> [messaggio] — per esempio /timer 10 pasta
 /promemoria — i promemoria in attesa (/promemoria cancella 2 per toglierne uno)
-/briefing — il briefing: meteo, promemoria, notizie e consigli per la giornata
+/briefing — il briefing: meteo, impegni, promemoria, notizie e consigli per la giornata
+/agenda [domani o settimana] — gli impegni del calendario (/calendario <link> per collegarlo)
+/spotify <brano, album o playlist> — lo fa partire su Spotify
+/server [indirizzo] — chi c'è sul server di Minecraft
+/telefono — collega il telefono per ricevere gli avvisi (/telefono prova, /telefono spegni)
 /sistema — diagnostica del PC (memoria, disco, scheda video)
 /chiamami <appellativo> — come vuoi essere chiamato (vuoto: nessun appellativo)
 /tu oppure /lei — se Jarvis ti dà del tu o del lei
@@ -415,9 +429,13 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
             + ("meteo, Wikipedia, notizie, " if config["internet"] else "")
             + ("ricerche sul web che leggono le pagine, " if config["internet"] else "")
             + "aprire siti, aprire ricerche nel browser, aprire programmi, calcoli esatti, timer, "
-            "promemoria con data e ora, leggere i documenti dell'utente (senza modificarli), guardare lo schermo"
+            "promemoria con data e ora, "
+            + ("il calendario dell'utente, " if (config.get("calendario_ics") or "").strip() else "")
+            + "leggere i documenti dell'utente (senza modificarli), guardare lo schermo"
             + (" e la webcam" if config.get("webcam", True) else "") + ", il tuo diario e la memoria, "
-            "diagnostica del PC, volume e musica. Usali quando servono, invece di inventare dati aggiornati o fare "
+            "diagnostica del PC, volume e musica, Spotify, lo stato dei server di Minecraft"
+            + (", messaggi al telefono dell'utente" if (config.get("telefono_ntfy") or "").strip() else "")
+            + ". Usali quando servono, invece di inventare dati aggiornati o fare "
             "conti a mente. Quando l'utente ti dice una cosa importante e duratura su di sé (impegni, gusti, "
             "persone care), salvala con lo strumento ricorda."
         )
@@ -806,6 +824,9 @@ class Assistente:
                 dati.append(strumenti.meteo(self.config["citta"]))
             except ErroreStrumento as e:
                 dati.append(f"Il meteo non è disponibile ({e}).")
+        if (self.config.get("calendario_ics") or "").strip() and self.config["internet"]:
+            yield ("info", strumenti.descrivi("agenda", {}))
+            dati.append(integrazioni.oggi_e_domani(self.config, adesso))
         oggi = [(q, m) for q, m in promemoria.in_attesa(adesso) if q.date() == adesso.date()]
         dati.append("Promemoria di oggi: " + "; ".join(f"alle {q.hour}:{q.minute:02d} {m}" for q, m in oggi)
                     if oggi else "Nessun promemoria per oggi.")
@@ -1018,6 +1039,19 @@ class Assistente:
                     yield ("info", promemoria.descrivi_elenco())
             elif nome == "gioco":
                 yield ("info", self.imposta_modalita_gioco(not self.modalita_gioco))
+            elif nome == "telefono":
+                yield ("info", self._telefono(argomento))
+            elif nome == "calendario":
+                yield ("info", self._calendario(argomento))
+            elif nome == "agenda":
+                yield ("info", strumenti.descrivi("agenda", {}))
+                agenda = integrazioni.agenda(self.config, argomento or "oggi")
+                return f"Che impegni ho {argomento or 'oggi'}?{SEPARATORE_DATI}{agenda}"
+            elif nome == "spotify":
+                yield ("info", integrazioni.spotify(argomento))
+            elif nome == "server":
+                yield ("info", strumenti.descrivi("server_minecraft", {}))
+                yield ("info", integrazioni.server_minecraft(argomento or self.config.get("server_minecraft")))
             elif nome in ("voce", "ascolto"):
                 yield ("info", "La voce e l'ascolto funzionano nella finestra di Jarvis (avviala con py -3.12 "
                                "jarvis.py).")
@@ -1053,9 +1087,53 @@ class Assistente:
                 yield ("info", strumenti.timer(minuti, messaggio, self.avvisa))
             else:
                 yield ("info", f"Comando sconosciuto: /{nome}. Scrivi /aiuto per l'elenco.")
-        except (ErroreStrumento, promemoria.ErrorePromemoria) as e:
+        except (ErroreStrumento, promemoria.ErrorePromemoria, integrazioni.ErroreIntegrazione) as e:
             yield ("info", f"Non ci sono riuscito: {e}")
         return None
+
+    def _telefono(self, argomento):
+        """Collega il telefono con l'app ntfy: gratis, senza account, il canale è un nome segreto e casuale."""
+        canale = (self.config.get("telefono_ntfy") or "").strip()
+        if argomento == "spegni":
+            if not canale:
+                return "Il telefono non era collegato."
+            return "Ho scollegato il telefono: non gli mando più niente." + \
+                self.salva_impostazione("telefono_ntfy", "")
+        if argomento == "prova":
+            if not canale:
+                return "Prima collega il telefono: scrivi /telefono."
+            return integrazioni.al_telefono(self.config, self.config["nome"],
+                                            "Prova riuscita: il telefono è collegato.", attendi=True)
+        avviso = ""
+        if not canale or argomento == "nuovo":
+            canale = integrazioni.nuovo_canale_ntfy()
+            avviso = self.salva_impostazione("telefono_ntfy", canale)
+        server = self.config.get("server_ntfy") or "https://ntfy.sh"
+        return ("Per ricevere gli avvisi sul telefono:\n"
+                "1. Installa l'app gratuita ntfy (Play Store o App Store).\n"
+                f"2. Premi + e scrivi il canale: {canale}\n"
+                f"   (se l'app lo chiede, il server è {server}).\n"
+                "3. Scrivi /telefono prova per controllare.\n"
+                "Gli avvisi arrivano sul telefono quando non sei al PC. Il nome del canale è come una password: "
+                "non darlo a nessuno (/telefono nuovo ne crea un altro)." + avviso)
+
+    def _calendario(self, argomento):
+        if argomento == "spegni":
+            return "Ho scollegato il calendario." + self.salva_impostazione("calendario_ics", "")
+        if not argomento:
+            if (self.config.get("calendario_ics") or "").strip():
+                return "Il calendario è collegato: chiedimi \"che impegni ho oggi?\" oppure scrivi /agenda."
+            return ("Per collegare Google Calendar: apri calendar.google.com dal PC, Impostazioni, scegli il tuo "
+                    "calendario e copia l'\"Indirizzo segreto in formato iCal\". Poi scrivi /calendario seguito "
+                    "dal link. Lo leggo e basta: non modifico niente.")
+        if not re.match(r"(https|webcal)://\S+$", argomento):
+            return "Il link deve iniziare con https:// (o webcal://): è quello che finisce con .ics."
+        try:
+            integrazioni.scarica_calendario(argomento)
+        except integrazioni.ErroreIntegrazione as e:
+            return f"Non ho collegato il calendario: {e}."
+        return "Calendario collegato: da ora lo uso per l'agenda e il briefing." + \
+            self.salva_impostazione("calendario_ics", argomento)
 
     def _comando_internet(self, nome, argomento):
         if not self.config["internet"]:

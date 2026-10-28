@@ -20,9 +20,12 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 - **Volume e musica**: alza, abbassa, muto, pausa, canzone successiva o precedente.
 - **Lavora in background**: i lavori lunghi li svolge mentre tu fai altro, e quando ha finito te lo dice a voce
   e con una notifica di Windows (vedi [Compiti in background](#compiti-in-background)).
-- **Modalità gioco**: "Jarvis, modalità gioco" e la scheda video resta tutta al gioco.
-- **Prende l'iniziativa**: promemoria con data e ora, briefing del mattino, avvisi se il PC ha problemi e
-  consigli di pausa (vedi [Jarvis prende l'iniziativa](#jarvis-prende-liniziativa)).
+- **Modalità gioco**: si accende da sola quando apri un gioco (o con "Jarvis, modalità gioco") e la scheda video
+  resta tutta al gioco.
+- **Collegato al tuo mondo**: il calendario, Spotify, il server di Minecraft e il telefono, dove ti arrivano gli
+  avvisi quando non sei al PC (vedi [Calendario, Spotify, Minecraft e telefono](#calendario-spotify-minecraft-e-telefono)).
+- **Prende l'iniziativa**: promemoria con data e ora, briefing del mattino, avvisi se il PC ha problemi,
+  consigli di pausa e un saluto quando torni al PC (vedi [Jarvis prende l'iniziativa](#jarvis-prende-liniziativa)).
 - **Ragionamento profondo**: per le domande difficili pensa prima di rispondere (più lento, più preciso).
 - **Sa cosa sa fare**: chiedigli "cosa sai fare?" o "quali sono i tuoi limiti?".
 - **Due cervelli sul tuo PC**: uno veloce per tutto il resto e uno grande per le domande difficili,
@@ -107,7 +110,12 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/timer <minuti> [messaggio]` | per esempio `/timer 10 pasta`                       |
 | `/sistema`                    | diagnostica del PC (memoria, disco, scheda video)   |
 | `/promemoria`                 | i promemoria in attesa (`/promemoria cancella 2` ne toglie uno) |
-| `/briefing`                   | meteo, promemoria, notizie e consigli per la giornata |
+| `/briefing`                   | meteo, impegni, promemoria, notizie e consigli per la giornata |
+| `/agenda [domani o settimana]`| gli impegni del calendario                          |
+| `/calendario <link>`          | collega il calendario (`/calendario spegni` lo scollega) |
+| `/spotify <cosa>`             | fa partire un brano, un album o una playlist su Spotify |
+| `/server [indirizzo]`         | se il server di Minecraft è acceso e chi sta giocando |
+| `/telefono`                   | collega il telefono (`/telefono prova`, `/telefono spegni`) |
 | `/chiamami <appellativo>`     | come vuoi essere chiamato (`/chiamami` da solo: nessun appellativo) |
 | `/tu` oppure `/lei`           | se Jarvis ti dà del tu o del lei                    |
 | `/ricorda <cosa>`             | salva un'informazione nella memoria permanente      |
@@ -171,6 +179,14 @@ Apri `config.json` con il Blocco note:
 | `microfono`             | una parte del nome del microfono da usare; vuoto = quello predefinito di Windows |
 | `attenzione`            | `"normale"`; `"alta"` (interviene ogni volta che vede un bisogno) oppure `"solo_nome"` (risponde solo se lo chiami) |
 | `attenzione_in_gioco`   | `true` per farlo rispondere senza il nome anche in modalità gioco |
+| `gioco_automatico`      | `false` per non accendere da solo la modalità gioco quando apri un gioco |
+| `giochi`                | i programmi che contano come giochi, per esempio `["javaw.exe", "Terraria.exe"]`; vuoto = Minecraft, Roblox, Fortnite e altri famosi |
+| `saluto_al_ritorno`     | `false` per non farti salutare quando torni al PC               |
+| `presenza_webcam`       | `true` per farti vedere dalla webcam quando ti siedi (vedi sotto) |
+| `calendario_ics`        | il link segreto iCal del tuo calendario (lo scrive `/calendario`) |
+| `server_minecraft`      | l'indirizzo del server di Minecraft che usi di solito, per esempio `"26.12.34.56:25565"` |
+| `telefono_ntfy`         | il canale dell'app ntfy del telefono (lo scrive `/telefono`)     |
+| `avvisi_al_telefono`    | `false` per non mandare gli avvisi al telefono quando sei lontano dal PC |
 | `cervello`              | `"locale"`, `"ibrido"` o `"claude"` (vedi sotto)                |
 | `modello_claude`        | quale modello di Claude usare (predefinito `claude-opus-5-5`)   |
 | `sforzo_claude`         | quanto ragiona Claude: `low`, `medium`, `high` (più alto = più preciso e più caro) |
@@ -315,8 +331,34 @@ voci maschili, e `effetto_voce` in `config.json` aggiunge un effetto in stile fi
   Lo dice una volta sola, poi aspetta un po' prima di ripeterlo.
 - **Pause**: dopo due ore di computer senza staccare ti consiglia una pausa (non in modalità gioco). Se ti alzi
   per almeno cinque minuti, il conto riparte da zero.
+- **Modalità gioco da sola**: quando apri Minecraft (o un altro gioco della lista `giochi`) la accende e lo dice;
+  quando chiudi il gioco la spegne. Se la spegni tu durante la partita, non insiste.
+- **Quando torni**: se sei stato via più di mezz'ora, appena tocchi il mouse ti saluta e ti dice cosa è successo
+  mentre non c'eri (promemoria, compiti finiti) e cosa ti aspetta nella prossima ora.
 
-Si regolano in `config.json`: `briefing`, `ora_briefing`, `avvisi_pc`, `consigli_pausa`.
+Si regolano in `config.json`: `briefing`, `ora_briefing`, `avvisi_pc`, `consigli_pausa`, `gioco_automatico`,
+`saluto_al_ritorno`.
+
+## Calendario, Spotify, Minecraft e telefono
+
+- **Calendario**: "Jarvis, che impegni ho domani?", "cosa ho questa settimana?". Gli impegni di oggi entrano
+  anche nel briefing del mattino. Per collegare Google Calendar: apri calendar.google.com dal PC, vai in
+  Impostazioni, scegli il tuo calendario e copia l'**Indirizzo segreto in formato iCal**; poi scrivi a Jarvis
+  `/calendario ` seguito dal link. Funziona anche con Outlook e con qualunque calendario che ha un link `.ics`.
+  Jarvis lo legge e basta: non può aggiungere né cancellare impegni.
+- **Spotify**: "Jarvis, metti Back in Black degli AC/DC", "fai partire una playlist lo-fi". Trova il brano e lo
+  apre nell'app di Spotify (se non parte da solo, premi play). Per pausa, volume e canzone successiva usa i
+  comandi della musica: "Jarvis, pausa", "Jarvis, canzone successiva".
+- **Server di Minecraft**: "Jarvis, il server è acceso? Chi sta giocando?". Scrivi l'indirizzo del server che
+  usi di solito (anche quello di Radmin VPN) in `server_minecraft` dentro `config.json`, oppure diglielo.
+- **Telefono**: scrivi `/telefono` e segui le istruzioni: installi l'app gratuita **ntfy** (Play Store o App
+  Store, senza account) e ti iscrivi al canale che ti dice Jarvis. Da quel momento, se non sei al PC, gli avvisi
+  (promemoria, timer, compiti finiti) arrivano anche sul telefono. Puoi anche chiedere: "Jarvis, mandami la lista
+  della spesa sul telefono". `/telefono prova` manda un messaggio di prova.
+- **Ti vede quando ti siedi** (parte spento): con `"presenza_webcam": true`, quando sei via da più di mezz'ora
+  Jarvis dà un'occhiata dalla webcam una volta al minuto e ti saluta appena ti vede, prima ancora che tocchi il
+  mouse. Serve `opencv-python` (`py -3.12 -m pip install opencv-python`); la luce della webcam si accende per un
+  attimo a ogni occhiata.
 
 ## Cosa sa di te
 
@@ -422,6 +464,12 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
   ai siti che legge, e invia solo cosa cercare. Con `"internet": false` non lo fa mai.
 - Documenti, foto dello schermo e della webcam li guarda il modello sul PC. Se usi Claude (`/cervello ibrido` o
   `claude`), a Claude arriva quello che il modello ne ha capito, insieme alla conversazione.
+- **Calendario**: Jarvis scarica il calendario dal link che gli hai dato e lo legge sul PC. Quel link è segreto
+  (chi lo ha vede i tuoi impegni): non condividerlo e non mostrare a nessuno il tuo `config.json`.
+- **Telefono**: i messaggi per il telefono passano dal servizio gratuito ntfy.sh. Chiunque conosca il nome del
+  canale potrebbe leggerli: per questo è lungo e casuale, e va tenuto per te (`/telefono nuovo` ne crea un altro).
+  Ci finiscono solo gli avvisi e quello che chiedi tu di mandare.
+- **Presenza dalla webcam**: le foto servono solo a vedere se c'è un volto, sul PC, e vengono buttate subito.
 
 ## Limiti
 
@@ -430,6 +478,8 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
   guarda cosa ha scritto nella finestra.
 - È un modello piccolo: può sbagliare o inventare. Per le cose importanti controlla sempre.
 - Apre solo i programmi elencati in `config.json`.
+- Il calendario lo legge ma non lo modifica, e Spotify lo apre ma non sceglie al posto tuo se ci sono più
+  risultati simili.
 
 ## Se qualcosa non va
 

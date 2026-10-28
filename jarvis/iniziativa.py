@@ -5,7 +5,11 @@ Un thread controlla ogni 20 secondi se c'è qualcosa da dire:
 - il briefing del mattino, una volta al giorno;
 - gli avvisi sul PC: batteria scarica, disco quasi pieno, scheda video troppo calda, memoria piena;
 - un consiglio di pausa dopo ore di computer senza staccare;
-- il diario: quando l'utente fa una pausa, Jarvis riassume le giornate con conversazioni nuove.
+- il diario: quando l'utente fa una pausa, Jarvis riassume le giornate con conversazioni nuove;
+- la modalità gioco: si accende da sola quando parte un gioco e si spegne quando il gioco si chiude;
+- il ritorno: quando l'utente torna al PC dopo un po', Jarvis lo saluta e gli dice cosa è successo nel frattempo
+  (con "presenza_webcam" lo vede anche dalla webcam, prima ancora che tocchi il mouse);
+- il telefono: gli avvisi dati mentre l'utente non è al PC arrivano anche all'app ntfy.
 """
 
 import ctypes
@@ -17,12 +21,14 @@ import time
 from datetime import datetime
 from pathlib import Path
 
+import integrazioni
 import promemoria
 import strumenti
 
 FILE_STATO = Path(__file__).resolve().parent / "dati" / "iniziativa.json"
 PAUSA_DOPO = 2 * 3600  # secondi di computer senza staccare prima di consigliare una pausa
 STACCO = 5 * 60  # secondi senza toccare mouse e tastiera che contano come pausa
+ASSENZA = 30 * 60  # secondi lontano dal PC dopo i quali, al ritorno, Jarvis saluta
 
 
 def secondi_di_inattivita():
@@ -64,16 +70,37 @@ def stato_del_pc():
     return stato
 
 
+def _vede_qualcuno():
+    import schermo
+
+    return schermo.vede_qualcuno()
+
+
 class Sorvegliante:
     """Il thread dell'iniziativa. `avvisa(messaggio)` fa parlare Jarvis; `proponi(comando)` gli chiede di fare
-    qualcosa (per esempio "/briefing") e restituisce False se in quel momento è occupato."""
+    qualcosa (per esempio "/briefing") e restituisce False se in quel momento è occupato; `cambia_gioco(attiva,
+    gioco)` accende o spegne la modalità gioco; `saluta(testo)` gli fa dire il saluto quando l'utente torna."""
 
     def __init__(self, config, avvisa, proponi=None, in_gioco=None, leggi_stato_pc=stato_del_pc,
-                 inattivita=secondi_di_inattivita, scrivi_diario=None):
+                 inattivita=secondi_di_inattivita, scrivi_diario=None, cambia_gioco=None,
+                 leggi_processi=integrazioni.processi_in_esecuzione, saluta=None, vede_qualcuno=_vede_qualcuno,
+                 al_telefono=integrazioni.al_telefono):
         self.config = config
         self.avvisa = avvisa
         self.proponi = proponi or (lambda comando: False)
         self.in_gioco = in_gioco or (lambda: False)
+        self.cambia_gioco = cambia_gioco
+        self._leggi_processi = leggi_processi
+        self._ultimo_controllo_giochi = 0.0
+        self._gioco_acceso_da_me = None  # il gioco per cui Jarvis ha acceso da solo la modalità gioco
+        self._gioco_ignorato = None  # l'utente ha spento la modalità gioco durante questa partita: non insiste
+        self.saluta = saluta or avvisa
+        self._vede_qualcuno = vede_qualcuno
+        self._al_telefono = al_telefono
+        self._lontano = False
+        self._salutato = False
+        self._ultimo_sguardo = 0.0
+        self._mentre_eri_via = []  # gli avvisi dati mentre l'utente non c'era, da riassumere al suo ritorno
         self._leggi_stato_pc = leggi_stato_pc
         self._inattivita = inattivita
         self._ultimi_avvisi = {}  # tipo di avviso → quando è stato dato
@@ -109,6 +136,10 @@ class Sorvegliante:
                 self._avvisi_pc(orologio)
         if self.config.get("consigli_pausa", True):
             self._pausa(orologio)
+        if orologio - self._ultimo_controllo_giochi >= 30 or not self._ultimo_controllo_giochi:
+            self._ultimo_controllo_giochi = orologio
+            self._giochi()
+        self._ritorno(adesso, orologio)
         self._diario(orologio)
 
     def _diario(self, orologio):
@@ -121,6 +152,86 @@ class Sorvegliante:
                 return
         self._ultimo_diario = orologio
         self.scrivi_diario()
+
+    # --- Modalità gioco automatica ---
+
+    def _giochi(self):
+        if not self.cambia_gioco or not self.config.get("gioco_automatico", True):
+            return
+        gioco = integrazioni.gioco_aperto(self.config, self._leggi_processi())
+        attiva = self.in_gioco()
+        if gioco is None:
+            self._gioco_ignorato = None
+            if self._gioco_acceso_da_me:
+                self._gioco_acceso_da_me = None
+                if attiva:  # la spegne solo se l'aveva accesa lui
+                    self.cambia_gioco(False, None)
+            return
+        if attiva or gioco == self._gioco_ignorato:
+            return
+        if self._gioco_acceso_da_me:  # l'aveva accesa Jarvis e l'utente l'ha spenta: per questa partita basta
+            self._gioco_ignorato, self._gioco_acceso_da_me = gioco, None
+            return
+        self._gioco_acceso_da_me = gioco
+        self.cambia_gioco(True, gioco)
+
+    # --- Il ritorno dell'utente ---
+
+    def annota(self, messaggio):
+        """Un avviso appena dato. Se l'utente non è al PC lo manda al telefono (se collegato) e lo tiene da parte
+        per raccontarglielo quando torna. Restituisce True se l'utente era lontano."""
+        inattivo = self._inattivita()
+        if inattivo is None or inattivo < STACCO:
+            return False
+        breve = messaggio if len(messaggio) <= 160 else messaggio[:160].rsplit(" ", 1)[0] + "..."
+        self._mentre_eri_via = (self._mentre_eri_via + [breve])[-5:]
+        if (self.config.get("telefono_ntfy") or "").strip() and self.config.get("avvisi_al_telefono", True):
+            try:
+                self._al_telefono(self.config, self.config.get("nome", "Jarvis"), messaggio)
+            except integrazioni.ErroreIntegrazione:
+                pass
+        return True
+
+    def _ritorno(self, adesso, orologio):
+        inattivo = self._inattivita()
+        if inattivo is None:
+            return
+        if inattivo < 60:  # l'utente sta usando il PC
+            if self._lontano and not self._salutato:
+                self._bentornato(adesso)
+            self._lontano = self._salutato = False
+            return
+        if inattivo >= ASSENZA:
+            self._lontano = True
+        if (self._lontano and not self._salutato and self.config.get("presenza_webcam", False)
+                and self.config.get("webcam", True) and orologio - self._ultimo_sguardo >= 60):
+            self._ultimo_sguardo = orologio
+            try:
+                visto = self._vede_qualcuno()
+            except Exception:  # webcam occupata, staccata o senza opencv: si aspetta il mouse
+                visto = False
+            if visto:
+                self._bentornato(adesso)
+
+    def _bentornato(self, adesso):
+        self._salutato = True
+        successo, self._mentre_eri_via = self._mentre_eri_via, []
+        if not self.config.get("saluto_al_ritorno", True) or self.in_gioco():
+            return
+        titolo = self.config.get("come_chiamarmi", "")
+        t = f", {titolo}" if titolo else ""
+        lei = self.config.get("dai_del", "lei") != "tu"
+        saluto = "Buongiorno" if 5 <= adesso.hour < 13 else "Buon pomeriggio" if 13 <= adesso.hour < 18 else \
+            "Buonasera"
+        righe = [f"{saluto}{t}, {'eccola' if lei else 'eccoti'} di nuovo."]
+        if successo:
+            righe.append(("Mentre era via: " if lei else "Mentre eri via: ")
+                         + "; ".join(m.rstrip(".") for m in successo) + ".")
+        prossimi = [(q, m) for q, m in promemoria.in_attesa(adesso) if (q - adesso).total_seconds() <= 3600]
+        if prossimi:
+            quando, cosa = prossimi[0]
+            righe.append(f"Tra poco, alle {quando.hour}:{quando.minute:02d}: {cosa}.")
+        self.saluta(" ".join(righe))
 
     # --- Promemoria ---
 

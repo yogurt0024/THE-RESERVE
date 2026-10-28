@@ -1,7 +1,8 @@
 """Gli occhi di Jarvis: una foto dello schermo (o della webcam) da far guardare al modello che vede.
 
 La foto si fa con i componenti di Windows (niente librerie da installare oltre a numpy), si rimpicciolisce e
-si passa al modello sul PC: non viene salvata né inviata a nessuno.
+si passa al modello sul PC: non viene salvata né inviata a nessuno. Lo stesso vale per il controllo della
+presenza ("presenza_webcam"): la foto serve solo a vedere se c'è un volto, poi si butta.
 """
 
 import ctypes
@@ -79,6 +80,17 @@ def cattura_webcam():
     finally:
         camera.release()
     return foto[:, :, ::-1].copy()  # da BGR a RGB
+
+
+def vede_qualcuno():
+    """True se dalla webcam si vede un volto (per accorgersi che l'utente si è seduto davanti al PC)."""
+    import cv2
+
+    foto = cattura_webcam()
+    grigio = cv2.cvtColor(foto, cv2.COLOR_RGB2GRAY)
+    rilevatore = cv2.CascadeClassifier(cv2.data.haarcascades + "haarcascade_frontalface_default.xml")
+    volti = rilevatore.detectMultiScale(grigio, scaleFactor=1.1, minNeighbors=6, minSize=(60, 60))
+    return len(volti) > 0
 
 
 def rimpicciolisci(rgb, lato=LATO_MASSIMO):

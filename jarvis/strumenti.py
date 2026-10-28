@@ -24,6 +24,7 @@ from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
 import documenti
+import integrazioni
 import promemoria
 import rete
 import ricordi
@@ -50,7 +51,7 @@ CONDIZIONI = {
     95: "temporale", 96: "temporale con grandine", 99: "temporale con grandine forte",
 }
 
-STRUMENTI_INTERNET = {"meteo", "wikipedia", "notizie", "cerca_in_rete", "leggi_pagina"}
+STRUMENTI_INTERNET = {"meteo", "wikipedia", "notizie", "cerca_in_rete", "leggi_pagina", "agenda", "manda_al_telefono"}
 
 
 class ErroreStrumento(Exception):
@@ -446,6 +447,16 @@ def schemi(config):
             _schema("leggi_pagina", "Legge il testo di una pagina web (per esempio un risultato della ricerca).",
                     {"indirizzo": _testo("Indirizzo della pagina")}, ["indirizzo"]),
         ]
+        if (config.get("calendario_ics") or "").strip():
+            elenco.append(_schema("agenda", "Gli impegni del calendario dell'utente.",
+                                  {"quando": {"type": "string", "enum": ["oggi", "domani", "settimana"],
+                                              "description": "Quali giorni"}}, []))
+        if (config.get("telefono_ntfy") or "").strip():
+            elenco.append(_schema("manda_al_telefono",
+                                  "Manda un messaggio al telefono dell'utente (una lista, un indirizzo, un appunto "
+                                  "da avere con sé). Usalo solo quando l'utente lo chiede.",
+                                  {"titolo": _testo("Titolo breve"), "messaggio": _testo("Il testo da mandare")},
+                                  ["messaggio"]))
     elenco += [
         _schema("apri_sito", "Apre un sito web nel browser dell'utente.",
                 {"indirizzo": _testo("Indirizzo del sito, per esempio youtube.com")}, ["indirizzo"]),
@@ -503,6 +514,12 @@ def schemi(config):
                 {}, []),
         _schema("multimedia", "Controlla volume e musica del PC.",
                 {"azione": {"type": "string", "enum": list(_TASTI), "description": "Cosa fare"}}, ["azione"]),
+        _schema("spotify", "Fa partire su Spotify un brano, un album, un artista o una playlist.",
+                {"cosa": _testo("Cosa ascoltare, per esempio: Back in Black AC/DC, oppure: playlist lo-fi")}, []),
+        _schema("server_minecraft",
+                "Controlla un server di Minecraft: se è acceso, la versione e chi sta giocando.",
+                {"indirizzo": _testo("Indirizzo del server, con la porta se non è 25565 (facoltativo: "
+                                     "senza, quello salvato in config.json)")}, []),
     ]
     if config.get("webcam", True):
         elenco.append(_schema("guarda_webcam",
@@ -567,6 +584,10 @@ def descrivi(nome, argomenti):
         "cancella_promemoria": "Cancello il promemoria...",
         "diagnostica": "Eseguo la diagnostica del sistema...",
         "multimedia": "Comando a volume e musica...",
+        "agenda": "Guardo il calendario...",
+        "spotify": f"Cerco «{a.get('cosa', '')}» su Spotify..." if a.get("cosa") else "Apro Spotify...",
+        "server_minecraft": "Controllo il server di Minecraft...",
+        "manda_al_telefono": "Lo mando al telefono...",
     }
     return frasi.get(nome, f"Uso lo strumento {nome}...")
 
@@ -614,9 +635,18 @@ def esegui(nome, argomenti, config, avvisa):
             return diagnostica()
         if nome == "multimedia":
             return multimedia(argomenti.get("azione"))
+        if nome == "agenda":
+            return integrazioni.agenda(config, argomenti.get("quando") or "oggi")
+        if nome == "spotify":
+            return integrazioni.spotify(argomenti.get("cosa"))
+        if nome == "server_minecraft":
+            return integrazioni.server_minecraft(argomenti.get("indirizzo") or config.get("server_minecraft"))
+        if nome == "manda_al_telefono":
+            return integrazioni.al_telefono(config, argomenti.get("titolo") or config.get("nome", "Jarvis"),
+                                            argomenti.get("messaggio") or "", attendi=True)
         raise ErroreStrumento(f"lo strumento {nome} non esiste.")
     except (ErroreStrumento, promemoria.ErrorePromemoria, rete.ErroreRete, documenti.ErroreDocumenti,
-            ValueError) as e:
+            integrazioni.ErroreIntegrazione, ValueError) as e:
         return f"Errore: {e}"
     except Exception as e:  # una risposta imprevista da un sito non deve far cadere Jarvis
         return f"Errore: qualcosa è andato storto ({e})."

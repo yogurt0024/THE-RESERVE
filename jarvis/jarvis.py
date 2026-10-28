@@ -62,15 +62,27 @@ def mostra(eventi, nome):
 
 def terminale(config):
     nome = config["nome"]
+    sorvegliante = None
+
     def avvisa(messaggio):
         print(f"\n» {messaggio}\a\nTu: ", end="", flush=True)
         notifiche.mostra(nome, messaggio)
+        if sorvegliante:
+            sorvegliante.annota(messaggio)
 
     def al_termine(compito):
         esito = {"completato": "completato", "errore": "non riuscito"}.get(compito.stato, compito.stato)
         print(f"\n» Compito {compito.numero} {esito}: {compito.descrizione}\n{nome}: {compito.risultato}\a\n\nTu: ",
               end="", flush=True)
         notifiche.mostra(f"{nome}: compito {compito.numero} {esito}", compito.risultato)
+        if sorvegliante:
+            sorvegliante.annota(f"Compito {compito.numero} {esito} ({compito.descrizione}): {compito.risultato}")
+
+    def cambia_gioco(attiva, gioco):
+        print(f"\n» {assistente.imposta_modalita_gioco(attiva)}\nTu: ", end="", flush=True)
+
+    def saluta(testo):
+        print(f"\n{nome}: {testo}\nTu: ", end="", flush=True)
 
     assistente = Assistente(config, avvisa=avvisa, al_termine=al_termine)
     print(f"Avvio di {nome} con il modello {config['modello']}...")
@@ -81,7 +93,8 @@ def terminale(config):
     print(assistente.stato())
     print("Scrivi una domanda, oppure /aiuto per i comandi.\n")
     sorvegliante = iniziativa.Sorvegliante(config, avvisa=avvisa, in_gioco=lambda: assistente.modalita_gioco,
-                                           scrivi_diario=assistente.scrivi_diari)
+                                           scrivi_diario=assistente.scrivi_diari, cambia_gioco=cambia_gioco,
+                                           saluta=saluta)
     sorvegliante.avvia()
 
     while True:
