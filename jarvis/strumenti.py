@@ -1,0 +1,384 @@
+"""Gli strumenti di Jarvis: meteo, Wikipedia, notizie, siti, programmi, calcoli e timer.
+
+Ogni strumento è una funzione che restituisce un testo, oppure solleva ErroreStrumento.
+Il modello li usa da solo (se lo supporta); l'utente li richiama con /meteo, /wiki, ...
+"""
+
+import ast
+import json
+import math
+import operator
+import os
+import re
+import threading
+import urllib.parse
+import urllib.request
+import webbrowser
+import xml.etree.ElementTree as ET
+from datetime import date, datetime, timedelta
+from email.utils import parsedate_to_datetime
+
+AGENTE = "Jarvis/2.0 (assistente personale; https://github.com/yogurt0024/THE-RESERVE)"
+
+GIORNI = ["lunedì", "martedì", "mercoledì", "giovedì", "venerdì", "sabato", "domenica"]
+MESI = [
+    "gennaio", "febbraio", "marzo", "aprile", "maggio", "giugno",
+    "luglio", "agosto", "settembre", "ottobre", "novembre", "dicembre",
+]
+
+# Codici meteo WMO usati da Open-Meteo.
+CONDIZIONI = {
+    0: "sereno", 1: "quasi sereno", 2: "parzialmente nuvoloso", 3: "coperto",
+    45: "nebbia", 48: "nebbia con brina",
+    51: "pioggerella debole", 53: "pioggerella", 55: "pioggerella intensa",
+    56: "pioggerella gelata", 57: "pioggerella gelata intensa",
+    61: "pioggia debole", 63: "pioggia", 65: "pioggia forte",
+    66: "pioggia gelata", 67: "pioggia gelata forte",
+    71: "neve debole", 73: "neve", 75: "neve forte", 77: "granelli di neve",
+    80: "rovesci deboli", 81: "rovesci", 82: "rovesci violenti",
+    85: "rovesci di neve", 86: "forti rovesci di neve",
+    95: "temporale", 96: "temporale con grandine", 99: "temporale con grandine forte",
+}
+
+STRUMENTI_INTERNET = {"meteo", "wikipedia", "notizie"}
+
+
+class ErroreStrumento(Exception):
+    pass
+
+
+def data_italiana(giorno):
+    return f"{GIORNI[giorno.weekday()]} {giorno.day} {MESI[giorno.month - 1]} {giorno.year}"
+
+
+def _scarica(url, parametri=None):
+    if parametri:
+        url += "?" + urllib.parse.urlencode(parametri)
+    richiesta = urllib.request.Request(url, headers={"User-Agent": AGENTE})
+    try:
+        with urllib.request.urlopen(richiesta, timeout=15) as risposta:
+            return risposta.read()
+    except OSError:
+        raise ErroreStrumento("non riesco a collegarmi a internet.") from None
+
+
+def _gradi(valore):
+    return "n.d." if valore is None else f"{valore:.0f}°C"
+
+
+def _numero(valore):
+    """Scrive un numero all'italiana: 1.234.567 e 3,14."""
+    if isinstance(valore, float) and valore.is_integer() and abs(valore) < 1e15:
+        valore = int(valore)
+    if isinstance(valore, int):
+        return f"{valore:,}".replace(",", ".")
+    return f"{valore:.10g}".replace(".", ",")
+
+
+def _durata(minuti):
+    if minuti < 1:
+        secondi = max(1, round(minuti * 60))
+        return "1 secondo" if secondi == 1 else f"{secondi} secondi"
+    return "1 minuto" if minuti == 1 else f"{_numero(minuti)} minuti"
+
+
+def meteo(citta):
+    citta = (citta or "").strip()
+    if not citta:
+        raise ErroreStrumento("non so di quale città vuoi il meteo.")
+    luoghi = json.loads(_scarica(
+        "https://geocoding-api.open-meteo.com/v1/search",
+        {"name": citta, "count": 1, "language": "it", "format": "json"},
+    )).get("results")
+    if not luoghi:
+        raise ErroreStrumento(f'non trovo la città "{citta}".')
+    luogo = luoghi[0]
+    dati = json.loads(_scarica("https://api.open-meteo.com/v1/forecast", {
+        "latitude": luogo["latitude"],
+        "longitude": luogo["longitude"],
+        "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m",
+        "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max",
+        "timezone": "auto",
+        "forecast_days": 3,
+    }))
+    adesso = dati["current"]
+    giorni = dati["daily"]
+    nome = ", ".join(p for p in (luogo.get("name"), luogo.get("admin1"), luogo.get("country")) if p)
+    righe = [
+        f"Meteo di {nome} (fonte: Open-Meteo)",
+        f"Adesso: {_gradi(adesso['temperature_2m'])} (percepiti {_gradi(adesso['apparent_temperature'])}), "
+        f"{CONDIZIONI.get(adesso['weather_code'], 'condizioni sconosciute')}, "
+        f"umidità {adesso['relative_humidity_2m']}%, vento {adesso['wind_speed_10m']:.0f} km/h.",
+    ]
+    for i, (giorno, etichetta) in enumerate(zip(giorni["time"], ["Oggi", "Domani", "Dopodomani"])):
+        quando = date.fromisoformat(giorno)
+        riga = (
+            f"{etichetta} ({GIORNI[quando.weekday()]} {quando.day}): "
+            f"{CONDIZIONI.get(giorni['weather_code'][i], 'condizioni sconosciute')}, "
+            f"minima {_gradi(giorni['temperature_2m_min'][i])}, massima {_gradi(giorni['temperature_2m_max'][i])}"
+        )
+        pioggia = giorni["precipitation_probability_max"][i]
+        if pioggia is not None:
+            riga += f", probabilità di pioggia {pioggia}%"
+        righe.append(riga + ".")
+    return "\n".join(righe)
+
+
+def wikipedia(argomento):
+    argomento = (argomento or "").strip()
+    if not argomento:
+        raise ErroreStrumento("non so cosa cercare su Wikipedia.")
+    dati = json.loads(_scarica("https://it.wikipedia.org/w/api.php", {
+        "action": "query", "format": "json", "formatversion": 2, "redirects": 1,
+        "generator": "search", "gsrsearch": argomento, "gsrlimit": 1,
+        "prop": "extracts|info", "inprop": "url", "exintro": 1, "explaintext": 1,
+    }))
+    pagine = dati.get("query", {}).get("pages", [])
+    if not pagine or not pagine[0].get("extract", "").strip():
+        raise ErroreStrumento(f'non trovo niente su Wikipedia per "{argomento}".')
+    pagina = pagine[0]
+    estratto = pagina["extract"].strip()
+    if len(estratto) > 2500:
+        estratto = estratto[:2500].rsplit(" ", 1)[0] + "…"
+    return f'Wikipedia, voce "{pagina["title"]}" ({pagina.get("fullurl", "")}):\n{estratto}'
+
+
+def notizie(argomento=""):
+    argomento = (argomento or "").strip()
+    lingua = {"hl": "it", "gl": "IT", "ceid": "IT:it"}
+    if argomento:
+        contenuto = _scarica("https://news.google.com/rss/search", {"q": argomento, **lingua})
+    else:
+        contenuto = _scarica("https://news.google.com/rss", lingua)
+    try:
+        radice = ET.fromstring(contenuto)
+    except ET.ParseError:
+        raise ErroreStrumento("il servizio delle notizie ha risposto in modo strano.") from None
+    righe = []
+    for notizia in radice.iter("item"):
+        riga = f"- {(notizia.findtext('title') or '').strip()}"
+        try:
+            quando = parsedate_to_datetime(notizia.findtext("pubDate") or "").astimezone()
+            riga += f" ({quando:%d/%m %H:%M})"
+        except (TypeError, ValueError):
+            pass
+        righe.append(riga)
+        if len(righe) == 8:
+            break
+    if not righe:
+        raise ErroreStrumento(f'non trovo notizie su "{argomento}".' if argomento else "non trovo notizie.")
+    intestazione = f'Notizie su "{argomento}"' if argomento else "Notizie principali in Italia"
+    return f"{intestazione} (fonte: Google News):\n" + "\n".join(righe)
+
+
+def apri_sito(indirizzo):
+    indirizzo = (indirizzo or "").strip()
+    if not re.match(r"https?://", indirizzo, re.IGNORECASE):
+        indirizzo = "https://" + indirizzo
+    if " " in indirizzo or "." not in indirizzo:
+        raise ErroreStrumento(f'"{indirizzo}" non sembra l\'indirizzo di un sito.')
+    webbrowser.open(indirizzo)
+    return f"Ho aperto {indirizzo} nel browser."
+
+
+def cerca_sul_web(testo):
+    testo = (testo or "").strip()
+    if not testo:
+        raise ErroreStrumento("non so cosa cercare.")
+    webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote_plus(testo))
+    return f'Ho aperto nel browser la ricerca Google di "{testo}".'
+
+
+def apri_programma(nome, programmi):
+    chiave = (nome or "").strip().lower()
+    if not chiave:
+        raise ErroreStrumento("non so quale programma aprire.")
+    noti = {k.lower(): v for k, v in programmi.items()}
+    percorso = noti.get(chiave)
+    if percorso is None:
+        # "il blocco note" o "blocco" bastano per trovare "blocco note".
+        percorso = next((v for k, v in noti.items() if k in chiave or chiave in k), None)
+    if percorso is None:
+        raise ErroreStrumento(
+            f'non conosco il programma "{nome}". Posso aprire: {", ".join(programmi)}. '
+            "Altri programmi si aggiungono in config.json."
+        )
+    if not hasattr(os, "startfile"):
+        raise ErroreStrumento("posso aprire programmi solo su Windows.")
+    try:
+        os.startfile(percorso)
+    except OSError:
+        raise ErroreStrumento(f'non riesco ad aprire "{nome}" ({percorso}): controlla config.json.') from None
+    return f"Ho aperto {nome}."
+
+
+_OPERAZIONI = {
+    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+    ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv, ast.Mod: operator.mod,
+    ast.Pow: operator.pow, ast.USub: operator.neg, ast.UAdd: operator.pos,
+}
+_FUNZIONI = {
+    "sqrt": math.sqrt, "radice": math.sqrt, "abs": abs, "round": round, "arrotonda": round,
+    "sin": math.sin, "cos": math.cos, "tan": math.tan, "exp": math.exp,
+    "log": math.log, "ln": math.log, "log10": math.log10,
+    "floor": math.floor, "ceil": math.ceil, "factorial": math.factorial, "fattoriale": math.factorial,
+}
+_COSTANTI = {"pi": math.pi, "pigreco": math.pi, "e": math.e}
+
+
+def _valuta(nodo):
+    """Calcola un'espressione già analizzata, permettendo solo numeri, operazioni e funzioni note."""
+    if isinstance(nodo, ast.Constant) and type(nodo.value) in (int, float):
+        return nodo.value
+    if isinstance(nodo, ast.Name) and nodo.id.lower() in _COSTANTI:
+        return _COSTANTI[nodo.id.lower()]
+    if isinstance(nodo, ast.UnaryOp) and type(nodo.op) in _OPERAZIONI:
+        return _OPERAZIONI[type(nodo.op)](_valuta(nodo.operand))
+    if isinstance(nodo, ast.BinOp) and type(nodo.op) in _OPERAZIONI:
+        sinistra, destra = _valuta(nodo.left), _valuta(nodo.right)
+        # Evita conti enormi che bloccherebbero il PC, come 9**9**9.
+        if isinstance(nodo.op, ast.Pow) and (abs(destra) > 1000 or abs(sinistra) > 1e100):
+            raise ValueError("numero troppo grande")
+        return _OPERAZIONI[type(nodo.op)](sinistra, destra)
+    if (
+        isinstance(nodo, ast.Call) and isinstance(nodo.func, ast.Name)
+        and nodo.func.id.lower() in _FUNZIONI and not nodo.keywords
+    ):
+        funzione = _FUNZIONI[nodo.func.id.lower()]
+        argomenti = [_valuta(a) for a in nodo.args]
+        if funzione is math.factorial and argomenti and argomenti[0] > 1000:
+            raise ValueError("numero troppo grande")
+        return funzione(*argomenti)
+    raise ValueError("espressione non permessa")
+
+
+def calcola(espressione):
+    espressione = (espressione or "").strip()
+    testo = espressione.replace("^", "**").replace("×", "*").replace("÷", "/").replace(":", "/")
+    if not re.search(r"[a-zA-Z]", testo):
+        testo = re.sub(r"(\d),(\d)", r"\1.\2", testo)  # 3,5 → 3.5
+    try:
+        risultato = _valuta(ast.parse(testo, mode="eval").body)
+        if isinstance(risultato, complex) or (isinstance(risultato, float) and not math.isfinite(risultato)):
+            raise ValueError("risultato non reale")
+    except ZeroDivisionError:
+        raise ErroreStrumento("non si può dividere per zero.") from None
+    except (SyntaxError, TypeError, ValueError, OverflowError):
+        raise ErroreStrumento(f'non riesco a calcolare "{espressione}".') from None
+    return f"{espressione} = {_numero(risultato)}"
+
+
+def timer(minuti, messaggio, avvisa):
+    try:
+        minuti = float(str(minuti).replace(",", "."))
+    except ValueError:
+        raise ErroreStrumento("dimmi dopo quanti minuti deve suonare il timer.") from None
+    if not 0 < minuti <= 24 * 60:
+        raise ErroreStrumento("il timer deve durare al massimo 24 ore.")
+    messaggio = (messaggio or "").strip() or "tempo scaduto!"
+    allarme = threading.Timer(minuti * 60, avvisa, args=[f"Timer: {messaggio}"])
+    allarme.daemon = True
+    allarme.start()
+    scadenza = datetime.now() + timedelta(minutes=minuti)
+    return f"Timer di {_durata(minuti)} impostato: suonerà alle {scadenza:%H:%M:%S}."
+
+
+def _schema(nome, descrizione, parametri, obbligatori):
+    return {
+        "type": "function",
+        "function": {
+            "name": nome,
+            "description": descrizione,
+            "parameters": {"type": "object", "properties": parametri, "required": obbligatori},
+        },
+    }
+
+
+def _testo(descrizione):
+    return {"type": "string", "description": descrizione}
+
+
+def schemi(config):
+    """Descrive al modello gli strumenti che può usare."""
+    elenco = []
+    if config["internet"]:
+        elenco += [
+            _schema("meteo", "Meteo attuale e previsioni dei prossimi 3 giorni per una città.",
+                    {"citta": _testo("Nome della città, per esempio Cagliari")}, ["citta"]),
+            _schema("wikipedia",
+                    "Cerca un argomento su Wikipedia in italiano e ne restituisce il riassunto. "
+                    "Usalo per verificare fatti su persone, luoghi, storia, scienza.",
+                    {"argomento": _testo("Cosa cercare")}, ["argomento"]),
+            _schema("notizie",
+                    "Ultime notizie da Google News. Senza argomento restituisce le notizie principali in Italia.",
+                    {"argomento": _testo("Argomento delle notizie (facoltativo)")}, []),
+        ]
+    elenco += [
+        _schema("apri_sito", "Apre un sito web nel browser dell'utente.",
+                {"indirizzo": _testo("Indirizzo del sito, per esempio youtube.com")}, ["indirizzo"]),
+        _schema("cerca_sul_web",
+                "Apre una ricerca Google nel browser dell'utente. Tu non vedi i risultati: "
+                "usalo solo quando l'utente vuole vedere una ricerca.",
+                {"testo": _testo("Cosa cercare")}, ["testo"]),
+        _schema("apri_programma",
+                f"Apre un programma sul PC dell'utente. Programmi disponibili: {', '.join(config['programmi'])}.",
+                {"nome": _testo("Nome del programma, tra quelli disponibili")}, ["nome"]),
+        _schema("calcola",
+                "Calcola un'espressione matematica in modo esatto. Usalo per qualsiasi conto invece di farlo a mente. "
+                "% è il resto della divisione: per le percentuali scrivi per esempio 250 * 17 / 100.",
+                {"espressione": _testo("Espressione, per esempio (12.5 + 3) * 2 oppure sqrt(144)")},
+                ["espressione"]),
+        _schema("timer", "Imposta un timer: allo scadere l'utente riceve un avviso.",
+                {"minuti": {"type": "number", "description": "Dopo quanti minuti suonare (0.5 = 30 secondi)"},
+                 "messaggio": _testo("Cosa ricordare all'utente allo scadere (facoltativo)")},
+                ["minuti"]),
+    ]
+    return elenco
+
+
+def descrivi(nome, argomenti):
+    """Frase da mostrare all'utente mentre lo strumento lavora."""
+    a = {k: str(v) for k, v in argomenti.items()}
+    try:
+        durata = _durata(float(a.get("minuti", "").replace(",", ".")))
+    except ValueError:
+        durata = "?"
+    frasi = {
+        "meteo": f"Controllo il meteo di {a.get('citta', '')}...",
+        "wikipedia": f"Cerco «{a.get('argomento', '')}» su Wikipedia...",
+        "notizie": f"Cerco notizie su «{a['argomento']}»..." if a.get("argomento") else "Leggo le ultime notizie...",
+        "apri_sito": f"Apro {a.get('indirizzo', '')}...",
+        "cerca_sul_web": f"Apro la ricerca di «{a.get('testo', '')}» nel browser...",
+        "apri_programma": f"Apro {a.get('nome', '')}...",
+        "calcola": f"Calcolo {a.get('espressione', '')}...",
+        "timer": f"Imposto un timer di {durata}...",
+    }
+    return frasi.get(nome, f"Uso lo strumento {nome}...")
+
+
+def esegui(nome, argomenti, config, avvisa):
+    """Esegue lo strumento chiesto dal modello. Gli errori diventano testo, così il modello può spiegarli."""
+    try:
+        if nome in STRUMENTI_INTERNET and not config["internet"]:
+            raise ErroreStrumento("internet è disattivato in config.json.")
+        if nome == "meteo":
+            return meteo(argomenti.get("citta") or config["citta"])
+        if nome == "wikipedia":
+            return wikipedia(argomenti.get("argomento"))
+        if nome == "notizie":
+            return notizie(argomenti.get("argomento"))
+        if nome == "apri_sito":
+            return apri_sito(argomenti.get("indirizzo"))
+        if nome == "cerca_sul_web":
+            return cerca_sul_web(argomenti.get("testo"))
+        if nome == "apri_programma":
+            return apri_programma(argomenti.get("nome"), config["programmi"])
+        if nome == "calcola":
+            return calcola(str(argomenti.get("espressione", "")))
+        if nome == "timer":
+            return timer(argomenti.get("minuti"), argomenti.get("messaggio"), avvisa)
+        raise ErroreStrumento(f"lo strumento {nome} non esiste.")
+    except ErroreStrumento as e:
+        return f"Errore: {e}"
+    except Exception as e:  # una risposta imprevista da un sito non deve far cadere Jarvis
+        return f"Errore: qualcosa è andato storto ({e})."

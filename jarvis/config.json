@@ -1,7 +1,17 @@
 {
   "nome": "Jarvis",
   "come_chiamarmi": "",
-  "modello": "gemma3:4b",
+  "citta": "",
+  "modello": "qwen3:4b",
+  "ragionamento": false,
+  "internet": true,
+  "messaggi_da_ricordare": 20,
   "ollama_url": "http://localhost:11434",
-  "messaggi_da_ricordare": 20
+  "programmi": {
+    "blocco note": "notepad",
+    "calcolatrice": "calc",
+    "paint": "mspaint",
+    "esplora file": "explorer",
+    "impostazioni": "ms-settings:"
+  }
 }
