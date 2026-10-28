@@ -51,6 +51,10 @@ class FintoOllama(BaseHTTPRequestHandler):
             return self._json({"capabilities": self.CAPACITA[modello]})
         if not dati["messages"]:
             return self._json({"done": True})
+        if dati.get("stream") is False and "format" not in dati:  # diario, occhi: una risposta sola
+            ultimo = dati["messages"][-1]
+            contenuto = "Vedo un errore di Minecraft" if ultimo.get("images") else f"Riassunto di {modello}"
+            return self._json({"message": {"role": "assistant", "content": contenuto}, "done": True})
         if "format" in dati:  # il modulo di attenzione: decide se una frase senza nome era per Jarvis
             frase = dati["messages"][-1]["content"].rpartition("Frase appena sentita:")[2].lower()
             decisione = "ignora" if "arrivo" in frase else "bisogno" if "quanto fa" in frase else "rivolta"

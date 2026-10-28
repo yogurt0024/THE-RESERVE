@@ -23,7 +23,10 @@ import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
+import documenti
 import promemoria
+import rete
+import ricordi
 
 AGENTE = "Jarvis/2.0 (assistente personale; https://github.com/yogurt0024/THE-RESERVE)"
 
@@ -47,7 +50,7 @@ CONDIZIONI = {
     95: "temporale", 96: "temporale con grandine", 99: "temporale con grandine forte",
 }
 
-STRUMENTI_INTERNET = {"meteo", "wikipedia", "notizie"}
+STRUMENTI_INTERNET = {"meteo", "wikipedia", "notizie", "cerca_in_rete", "leggi_pagina"}
 
 
 class ErroreStrumento(Exception):
@@ -436,6 +439,12 @@ def schemi(config):
             _schema("notizie",
                     "Ultime notizie da Google News. Senza argomento restituisce le notizie principali in Italia.",
                     {"argomento": _testo("Argomento delle notizie (facoltativo)")}, []),
+            _schema("cerca_in_rete",
+                    "Cerca sul web e legge la prima pagina trovata. Usalo per fatti recenti, prezzi, orari, guide, "
+                    "recensioni e tutto quello che Wikipedia non sa.",
+                    {"domanda": _testo("Cosa cercare, con parole chiave precise")}, ["domanda"]),
+            _schema("leggi_pagina", "Legge il testo di una pagina web (per esempio un risultato della ricerca).",
+                    {"indirizzo": _testo("Indirizzo della pagina")}, ["indirizzo"]),
         ]
     elenco += [
         _schema("apri_sito", "Apre un sito web nel browser dell'utente.",
@@ -466,6 +475,28 @@ def schemi(config):
         _schema("elenco_promemoria", "Elenca i promemoria in attesa, con il loro numero.", {}, []),
         _schema("cancella_promemoria", "Cancella un promemoria in attesa.",
                 {"numero": {"type": "number", "description": "Il numero del promemoria nell'elenco"}}, ["numero"]),
+        _schema("cerca_file",
+                "Cerca un file per nome nelle cartelle Documenti, Desktop e Download dell'utente.",
+                {"nome": _testo("Una o più parole del nome del file")}, ["nome"]),
+        _schema("leggi_file",
+                "Legge un documento dell'utente (testo, Word, PDF...) per rispondere a domande su di esso. "
+                "Non lo modifica.",
+                {"percorso": _testo("Il percorso del file, come lo restituisce cerca_file"),
+                 "da": {"type": "number", "description": "Da che carattere continuare a leggere (facoltativo)"}},
+                ["percorso"]),
+        _schema("ricorda",
+                "Salva nella memoria permanente una cosa importante e duratura sull'utente: impegni, gusti, "
+                "persone care, informazioni utili in futuro.",
+                {"fatto": _testo("Il fatto, scritto in prima persona come lo direbbe l'utente: "
+                                 "\"Venerdì ho la verifica di storia\"")}, ["fatto"]),
+        _schema("ricordi",
+                "Cerca nel tuo diario e nelle conversazioni passate (\"di cosa abbiamo parlato ieri?\", "
+                "\"ti ricordi quel modpack?\").",
+                {"cosa": _testo("Cosa cercare (facoltativo)"),
+                 "giorno": _testo("Un giorno preciso: oggi, ieri o una data come 2026-10-27 (facoltativo)")}, []),
+        _schema("guarda_schermo",
+                "Guarda lo schermo dell'utente in questo momento e risponde a una domanda su quello che si vede.",
+                {"domanda": _testo("Cosa vuoi sapere, per esempio: cosa c'è scritto nell'errore?")}, ["domanda"]),
         _schema("diagnostica",
                 "Controlla lo stato del PC: memoria RAM, disco, scheda video (memoria e temperatura), "
                 "batteria e da quanto tempo è acceso.",
@@ -473,6 +504,11 @@ def schemi(config):
         _schema("multimedia", "Controlla volume e musica del PC.",
                 {"azione": {"type": "string", "enum": list(_TASTI), "description": "Cosa fare"}}, ["azione"]),
     ]
+    if config.get("webcam", True):
+        elenco.append(_schema("guarda_webcam",
+                              "Scatta una foto con la webcam e risponde a una domanda su quello che si vede. Usalo "
+                              "solo quando l'utente te lo chiede (\"guardami\", \"cosa ho in mano?\").",
+                              {"domanda": _testo("Cosa vuoi sapere")}, ["domanda"]))
     return elenco
 
 
@@ -519,6 +555,14 @@ def descrivi(nome, argomenti):
         "calcola": f"Calcolo {a.get('espressione', '')}...",
         "timer": f"Imposto un timer di {durata}...",
         "promemoria": f"Salvo il promemoria ({a.get('quando', '')})...",
+        "cerca_in_rete": f"Cerco «{a.get('domanda', '')}» sul web...",
+        "leggi_pagina": f"Leggo {a.get('indirizzo', '')}...",
+        "cerca_file": f"Cerco i file «{a.get('nome', '')}»...",
+        "leggi_file": f"Leggo {a.get('percorso', '').replace(chr(92), '/').rsplit('/', 1)[-1]}...",
+        "ricorda": "Lo annoto nella memoria...",
+        "ricordi": "Cerco nei miei ricordi...",
+        "guarda_schermo": "Guardo lo schermo...",
+        "guarda_webcam": "Guardo dalla webcam...",
         "elenco_promemoria": "Guardo i promemoria...",
         "cancella_promemoria": "Cancello il promemoria...",
         "diagnostica": "Eseguo la diagnostica del sistema...",
@@ -548,6 +592,18 @@ def esegui(nome, argomenti, config, avvisa):
             return calcola(str(argomenti.get("espressione", "")))
         if nome == "timer":
             return timer(argomenti.get("minuti"), argomenti.get("messaggio"), avvisa)
+        if nome == "cerca_in_rete":
+            return rete.cerca_in_rete(argomenti.get("domanda"))
+        if nome == "leggi_pagina":
+            return rete.leggi_pagina(argomenti.get("indirizzo"))
+        if nome == "cerca_file":
+            return documenti.cerca_file(argomenti.get("nome"), config)
+        if nome == "leggi_file":
+            return documenti.leggi_file(argomenti.get("percorso"), config, argomenti.get("da", 0))
+        if nome == "ricordi":
+            if argomenti.get("giorno"):
+                return ricordi.diario_di(argomenti["giorno"])
+            return ricordi.cerca(argomenti.get("cosa"))
         if nome == "promemoria":
             return promemoria.aggiungi(argomenti.get("quando"), argomenti.get("messaggio"))
         if nome == "elenco_promemoria":
@@ -559,7 +615,8 @@ def esegui(nome, argomenti, config, avvisa):
         if nome == "multimedia":
             return multimedia(argomenti.get("azione"))
         raise ErroreStrumento(f"lo strumento {nome} non esiste.")
-    except (ErroreStrumento, promemoria.ErrorePromemoria) as e:
+    except (ErroreStrumento, promemoria.ErrorePromemoria, rete.ErroreRete, documenti.ErroreDocumenti,
+            ValueError) as e:
         return f"Errore: {e}"
     except Exception as e:  # una risposta imprevista da un sito non deve far cadere Jarvis
         return f"Errore: qualcosa è andato storto ({e})."

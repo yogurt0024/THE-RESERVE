@@ -80,7 +80,8 @@ def terminale(config):
         raise SystemExit(f"Errore: {e}")
     print(assistente.stato())
     print("Scrivi una domanda, oppure /aiuto per i comandi.\n")
-    sorvegliante = iniziativa.Sorvegliante(config, avvisa=avvisa, in_gioco=lambda: assistente.modalita_gioco)
+    sorvegliante = iniziativa.Sorvegliante(config, avvisa=avvisa, in_gioco=lambda: assistente.modalita_gioco,
+                                           scrivi_diario=assistente.scrivi_diari)
     sorvegliante.avvia()
 
     while True:

@@ -11,6 +11,8 @@ from unittest import mock
 
 import cervello
 import cervello_claude
+import promemoria
+import ricordi
 import strumenti
 from test import finti
 
@@ -35,6 +37,8 @@ class Base(unittest.TestCase):
                                     (cervello, "FILE_CONVERSAZIONE", "conversazione.json"),
                                     (cervello_claude, "FILE_CHIAVE", "chiave.txt"),
                                     (cervello_claude, "FILE_COSTI", "costi.json"),
+                                    (ricordi, "CARTELLA_DIARIO", "diario"),
+                                    (promemoria, "FILE_PROMEMORIA", "promemoria.json"),
                                     (strumenti, "_scarica", None)]:
             sostituto = finti.internet_finto if file is None else cartella / file
             patch = mock.patch.object(oggetto, nome, sostituto)
@@ -168,7 +172,7 @@ class TestModelloLocale(Base):
         list(j.gestisci("Raccontami una barzelletta", a_voce=True))
         sistema = finti.FintoOllama.richieste[-1]["messages"][0]["content"]
         self.assertIn(cervello.ISTRUZIONI_VOCE, sistema)
-        self.assertIn("Non puoi vedere lo schermo, sentire la voce", sistema)
+        self.assertIn("Per ora non senti la voce dell'utente", sistema)
         j.voce_attiva = True  # la finestra lo accende quando il microfono funziona
         self.chiedi(j, "E domani?")
         sistema = finti.FintoOllama.richieste[-1]["messages"][0]["content"]
@@ -208,23 +212,43 @@ class TestModelloLocale(Base):
         self.assertNotIn("riavvia", eventi)
 
     def test_briefing_e_promemoria(self):
-        import promemoria
+        promemoria.aggiungi("tra 1 minuto", "chiamare la nonna")
+        j = self.jarvis(citta="Cagliari")
+        testo, avvisi, _ = self.chiedi(j, "Jarvis, com'è la mia giornata?")
+        self.assertEqual(avvisi, ["Controllo il meteo di Cagliari...", "Leggo le ultime notizie..."])
+        domanda = finti.FintoOllama.richieste[-1]["messages"][-1]["content"]
+        self.assertTrue(domanda.startswith("Fammi il briefing." + cervello.SEPARATORE_DATI))
+        for atteso in ("Meteo di Cagliari", "chiamare la nonna", "Esce il nuovo aggiornamento di Minecraft",
+                       cervello.ISTRUZIONI_BRIEFING):
+            self.assertIn(atteso, domanda)
+        self.assertNotIn("tools", finti.FintoOllama.richieste[-1])  # i dati li ha già raccolti Jarvis
+        _, avvisi, _ = self.chiedi(j, "/promemoria")
+        self.assertTrue(avvisi[0].startswith("Promemoria:\n1. oggi alle "))
+        _, avvisi, _ = self.chiedi(j, "/promemoria cancella 1")
+        self.assertEqual(avvisi, ["Promemoria cancellato: chiamare la nonna."])
 
-        with mock.patch.object(promemoria, "FILE_PROMEMORIA", self.cartella / "promemoria.json"):
-            promemoria.aggiungi("tra 1 minuto", "chiamare la nonna")
-            j = self.jarvis(citta="Cagliari")
-            testo, avvisi, _ = self.chiedi(j, "Jarvis, com'è la mia giornata?")
-            self.assertEqual(avvisi, ["Controllo il meteo di Cagliari...", "Leggo le ultime notizie..."])
-            domanda = finti.FintoOllama.richieste[-1]["messages"][-1]["content"]
-            self.assertTrue(domanda.startswith("Fammi il briefing." + cervello.SEPARATORE_DATI))
-            for atteso in ("Meteo di Cagliari", "chiamare la nonna", "Esce il nuovo aggiornamento di Minecraft",
-                           cervello.ISTRUZIONI_BRIEFING):
-                self.assertIn(atteso, domanda)
-            self.assertNotIn("tools", finti.FintoOllama.richieste[-1])  # i dati li ha già raccolti Jarvis
-            _, avvisi, _ = self.chiedi(j, "/promemoria")
-            self.assertTrue(avvisi[0].startswith("Promemoria:\n1. oggi alle "))
-            _, avvisi, _ = self.chiedi(j, "/promemoria cancella 1")
-            self.assertEqual(avvisi, ["Promemoria cancellato: chiamare la nonna."])
+    def test_occhi_memoria_e_diario(self):
+        try:
+            import numpy as np
+        except ImportError:
+            self.skipTest("numpy non installato")
+
+        import schermo
+
+        j = self.jarvis()
+        with mock.patch.object(schermo, "cattura_schermo", lambda: np.zeros((20, 30, 3), dtype=np.uint8)):
+            risposta = j._esegui("guarda_schermo", {"domanda": "Cosa dice l'errore?"})
+        self.assertEqual(risposta, "Quello che si vede sullo schermo: Vedo un errore di Minecraft")
+        richiesta = finti.FintoOllama.richieste[-1]
+        self.assertEqual(richiesta["model"], "qwen3.5:4b")  # il modello veloce sa vedere
+        self.assertTrue(richiesta["messages"][0]["images"][0])
+        self.assertEqual(j._esegui("ricorda", {"fatto": "venerdì ho la verifica di storia"}),
+                         "Memorizzato: Venerdì ho la verifica di storia")
+        self.chiedi(j, "Ciao")
+        j.scrivi_diari()
+        oggi = ricordi.riassunto(__import__("datetime").date.today())
+        self.assertIn("Riassunto di qwen3.5:4b", oggi)
+        self.assertIn("Ciao", ricordi.testo_per_il_riassunto(__import__("datetime").date.today()))
 
     def test_attenzione_senza_nome(self):
         j = self.jarvis()

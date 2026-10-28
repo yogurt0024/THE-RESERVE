@@ -68,7 +68,7 @@ class Finestra:
                               al_cambio=lambda parla: self.eventi.put(("parlando", parla)))
         self.sorvegliante = iniziativa.Sorvegliante(
             config, avvisa=lambda messaggio: self.eventi.put(("avviso", messaggio)), proponi=self._proponi,
-            in_gioco=lambda: self.assistente.modalita_gioco)
+            in_gioco=lambda: self.assistente.modalita_gioco, scrivi_diario=self.assistente.scrivi_diari)
         self.orecchio = self._nuovo_orecchio()
         self.orecchio_avviato = False
         self.stato_ascolto = ""

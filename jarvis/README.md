@@ -11,7 +11,10 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 - **Risponde alle domande** in una finestra in stile Jarvis (oppure nel Prompt dei comandi).
 - **Memoria permanente**: si ricorda quello che gli dici con "ricordati che..." e anche la conversazione,
   pure dopo averlo chiuso.
-- **Informazioni aggiornate da internet**: meteo, Wikipedia e notizie.
+- **Informazioni aggiornate da internet**: meteo, Wikipedia, notizie e ricerche sul web che leggono davvero le
+  pagine.
+- **Conosce le tue cose**: legge i tuoi documenti, guarda lo schermo e la webcam quando glielo chiedi, tiene un
+  diario delle vostre giornate (vedi [Cosa sa di te](#cosa-sa-di-te)).
 - **Azioni sul PC**: apre siti, ricerche Google e programmi, fa calcoli esatti, imposta timer.
 - **Diagnostica del PC**: memoria, disco, temperatura della scheda video, batteria.
 - **Volume e musica**: alza, abbassa, muto, pausa, canzone successiva o precedente.
@@ -145,6 +148,9 @@ Apri `config.json` con il Blocco note:
 | `modello_grande`        | il cervello grande per le domande difficili; vuoto = nessuno   |
 | `ragionamento`          | `true` per avere il ragionamento profondo già attivo all'avvio  |
 | `compiti_in_background` | `false` per aspettare la risposta del cervello grande invece di continuare a parlare |
+| `diario`                | `false` per non tenere il diario delle conversazioni           |
+| `webcam`                | `false` per non usare mai la webcam                            |
+| `cartelle_documenti`    | le cartelle dove può leggere i documenti, per esempio `["C:\\Users\\Yogur\\Documents"]`; vuoto = Documenti, Desktop e Download |
 | `briefing`              | `false` per non fare il briefing del mattino da solo            |
 | `ora_briefing`          | da che ora del mattino fare il briefing (predefinito `"07:30"`) |
 | `avvisi_pc`             | `false` per non avere avvisi su batteria, disco, temperatura e memoria |
@@ -312,6 +318,27 @@ voci maschili, e `effetto_voce` in `config.json` aggiunge un effetto in stile fi
 
 Si regolano in `config.json`: `briefing`, `ora_briefing`, `avvisi_pc`, `consigli_pausa`.
 
+## Cosa sa di te
+
+- **Ricerche sul web**: "Jarvis, cerca quando esce il nuovo aggiornamento di Minecraft". Cerca con DuckDuckGo e
+  legge le pagine, poi ti risponde con le informazioni trovate (non apre il browser, a meno che glielo chiedi).
+- **I tuoi documenti**: "Jarvis, trova gli appunti di storia e fammi un riassunto", "cosa dice la mia relazione
+  di fisica?". Legge testo, Word, LibreOffice e pagine salvate; i PDF se installi `pypdf`
+  (`py -3.12 -m pip install pypdf`). Guarda solo in Documenti, Desktop e Download (o nelle cartelle che scrivi in
+  `cartelle_documenti`) e non modifica né cancella niente.
+- **Lo schermo**: "Jarvis, cosa c'è scritto in questo errore?", "guarda lo schermo e dimmi cosa non va". Fa una
+  foto dello schermo e la fa guardare al cervello veloce, che sa vedere le immagini.
+- **La webcam**: "Jarvis, guardami: come mi sta questa maglietta?". La accende solo quando glielo chiedi
+  (`"webcam": false` per disattivarla del tutto).
+- **Memoria automatica**: quando gli dici una cosa importante su di te ("venerdì ho la verifica di storia") se la
+  annota da solo. `/memoria` mostra tutto quello che ricorda.
+- **Diario**: tiene traccia delle vostre conversazioni e, quando fai una pausa, scrive il riassunto della
+  giornata: cosa avete fatto, cosa ricordare e cosa potrebbe fare meglio. Così può dirti "ieri abbiamo scelto il
+  modpack" e ritrovare le cose: "Jarvis, di cosa abbiamo parlato ieri?", "ti ricordi quel modpack?".
+
+Tutto resta sul PC, nella cartella `dati`: le foto dello schermo e della webcam non vengono salvate, e il diario
+è in `dati/diario` (`"diario": false` per non tenerlo).
+
 ## Compiti in background
 
 Jarvis può lavorare a una cosa mentre tu fai altro, anche mentre continui a parlargli:
@@ -391,12 +418,14 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
   inviato a ElevenLabs, con `diego` e `giuseppe` a Microsoft. Il microfono non viene mai inviato a nessuno.
 - Quando risponde **Claude**, la conversazione recente e le tue informazioni in memoria vengono inviate
   ad Anthropic per ottenere la risposta. Con `/cervello locale` non succede mai.
-- Per meteo, Wikipedia e notizie Jarvis si collega a Open-Meteo, Wikipedia e Google News e invia
-  solo cosa cercare (per esempio il nome della città). Con `"internet": false` non lo fa mai.
+- Per meteo, Wikipedia, notizie e ricerche Jarvis si collega a Open-Meteo, Wikipedia, Google News, DuckDuckGo e
+  ai siti che legge, e invia solo cosa cercare. Con `"internet": false` non lo fa mai.
+- Documenti, foto dello schermo e della webcam li guarda il modello sul PC. Se usi Claude (`/cervello ibrido` o
+  `claude`), a Claude arriva quello che il modello ne ha capito, insieme alla conversazione.
 
 ## Limiti
 
-- Non vede lo schermo e non legge i file.
+- Legge i documenti ma non li modifica, e guarda lo schermo ma non usa mouse e tastiera al posto tuo.
 - Può capire male qualche parola, soprattutto con rumore o musica di sottofondo: per le cose importanti
   guarda cosa ha scritto nella finestra.
 - È un modello piccolo: può sbagliare o inventare. Per le cose importanti controlla sempre.

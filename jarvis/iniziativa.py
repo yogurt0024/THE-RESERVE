@@ -4,7 +4,8 @@ Un thread controlla ogni 20 secondi se c'è qualcosa da dire:
 - i promemoria arrivati all'ora (anche quelli scaduti mentre il PC era spento);
 - il briefing del mattino, una volta al giorno;
 - gli avvisi sul PC: batteria scarica, disco quasi pieno, scheda video troppo calda, memoria piena;
-- un consiglio di pausa dopo ore di computer senza staccare.
+- un consiglio di pausa dopo ore di computer senza staccare;
+- il diario: quando l'utente fa una pausa, Jarvis riassume le giornate con conversazioni nuove.
 """
 
 import ctypes
@@ -68,7 +69,7 @@ class Sorvegliante:
     qualcosa (per esempio "/briefing") e restituisce False se in quel momento è occupato."""
 
     def __init__(self, config, avvisa, proponi=None, in_gioco=None, leggi_stato_pc=stato_del_pc,
-                 inattivita=secondi_di_inattivita):
+                 inattivita=secondi_di_inattivita, scrivi_diario=None):
         self.config = config
         self.avvisa = avvisa
         self.proponi = proponi or (lambda comando: False)
@@ -79,6 +80,8 @@ class Sorvegliante:
         self._ultimo_controllo_pc = 0.0
         self._attivo_da = None  # da quando l'utente usa il PC senza pause
         self._ultima_pausa_consigliata = 0.0
+        self.scrivi_diario = scrivi_diario
+        self._ultimo_diario = None
         self._chiuso = threading.Event()
 
     def avvia(self):
@@ -106,6 +109,18 @@ class Sorvegliante:
                 self._avvisi_pc(orologio)
         if self.config.get("consigli_pausa", True):
             self._pausa(orologio)
+        self._diario(orologio)
+
+    def _diario(self, orologio):
+        """All'avvio e poi al massimo una volta all'ora, quando l'utente non sta usando il PC."""
+        if not self.scrivi_diario or not self.config.get("diario", True):
+            return
+        if self._ultimo_diario is not None:
+            inattivo = self._inattivita()
+            if orologio - self._ultimo_diario < 3600 or (inattivo is not None and inattivo < 600):
+                return
+        self._ultimo_diario = orologio
+        self.scrivi_diario()
 
     # --- Promemoria ---
 
