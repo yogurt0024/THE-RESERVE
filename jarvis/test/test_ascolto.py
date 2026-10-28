@@ -58,6 +58,25 @@ class TestSegmentatore(unittest.TestCase):
         self.assertEqual([s.aggiungi(blocco, p) for p in [0.9, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]], [None] * 7)
 
 
+@unittest.skipIf(np is None, "numpy non installato")
+class TestAudio(unittest.TestCase):
+    def test_volume_uguale_per_tutti(self):
+        piano = (np.sin(np.arange(1600) / 5) * 0.02).astype(np.float32)
+        self.assertAlmostEqual(float(np.max(np.abs(ascolto.normalizza(piano)))), 0.4, places=2)  # al massimo x20
+        forte = (np.sin(np.arange(1600) / 5) * 0.5).astype(np.float32)
+        self.assertAlmostEqual(float(np.max(np.abs(ascolto.normalizza(forte)))), 0.7, places=2)
+        self.assertEqual(float(np.max(np.abs(ascolto.normalizza(np.zeros(10, dtype=np.float32))))), 0.0)
+
+    def test_ricampiona_senza_fruscio(self):
+        t = np.arange(48000) / 48000
+        audio = (np.sin(2 * np.pi * 440 * t) + np.sin(2 * np.pi * 15000 * t)).astype(np.float32) * 0.1
+        r = ascolto.ricampiona(audio, 48000)
+        spettro, frequenze = np.abs(np.fft.rfft(r)), np.fft.rfftfreq(len(r), 1 / 16000)
+        self.assertEqual(len(r), 16000)
+        self.assertGreater(spettro[np.argmin(abs(frequenze - 440))], 100)
+        self.assertLess(spettro[np.argmin(abs(frequenze - 1000))], 5)  # i 15 kHz non tornano indietro a 1 kHz
+
+
 class RilevatoreFinto:
     """Il "microfono" manda blocchi pieni di 1 quando c'è voce e di 0 quando c'è silenzio."""
 

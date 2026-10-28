@@ -33,6 +33,9 @@ def mostra(eventi, nome):
                     print()
                 print("» " + ("(sto ragionando...)" if evento[0] == "pensiero" else evento[1]))
                 a_capo = True
+            elif evento[0] == "riavvia":
+                print("» Chiudi e riapri Jarvis per usare la versione nuova.")
+                a_capo = True
             elif evento[0] == "ritira":
                 # Il Prompt dei comandi non può cancellare il testo già scritto: si va a capo.
                 if not a_capo:

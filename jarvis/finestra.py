@@ -5,8 +5,10 @@ attraverso una coda, così la finestra non si blocca mai. Lo stesso fanno
 l'orecchio (ascolto.py) e la voce (voce.py), che lavorano in background.
 """
 
+import os
 import queue
 import random
+import subprocess
 import sys
 import threading
 import time
@@ -14,6 +16,7 @@ import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, simpledialog
 
+import aggiorna
 import ascolto
 import notifiche
 import scarica
@@ -74,6 +77,7 @@ class Finestra:
         self.valutando = False  # il cervello sta decidendo se una frase senza il nome era per lui
         self.ultimo_intervento = 0.0
         self.consigliato = False  # il consiglio di usare Python 3.12 si dà una volta sola
+        self.da_riavviare = False  # dopo un aggiornamento
 
         self.root = tk.Tk()
         self.root.title(self.nome)
@@ -217,6 +221,9 @@ class Finestra:
             self.eventi.put(("errore_avvio", str(e)))
             return
         self.eventi.put(("pronto",))
+        if self.config["controlla_aggiornamenti"] and aggiorna.c_e_un_aggiornamento():
+            self.eventi.put(("info", "C'è una versione nuova di Jarvis: di' \"Jarvis, aggiornati\" oppure scrivi "
+                                     "/aggiorna. I tuoi dati e le tue impostazioni restano come sono."))
         if self.config["ascolto"]:
             self.eventi.put(("avvia_orecchio",))
         if self.config["parla"] != "mai":
@@ -529,6 +536,8 @@ class Finestra:
                 self.voce.inizia()
         elif tipo == "pulisci":
             self._pulisci()
+        elif tipo == "riavvia":
+            self.da_riavviare = True
         elif tipo == "errore":
             self._riga(evento[1], "errore")
             if self.risposta_a_voce:
@@ -560,6 +569,9 @@ class Finestra:
             self.gioco.set(self.assistente.modalita_gioco)
             if not self.a_capo:
                 self._scrivi("\n")
+            if self.da_riavviare:
+                self._riavvia_quando_ha_finito()
+                return
             self._comando_rimasto()
         elif tipo == "pronto":
             self._mostra_cronologia()
@@ -640,6 +652,15 @@ class Finestra:
         self.root.lift()
         self.root.attributes("-topmost", True)
         self.root.after(500, lambda: self.root.attributes("-topmost", False))
+
+    def _riavvia_quando_ha_finito(self):
+        """Dopo un aggiornamento: lascia finire la frase, poi riapre Jarvis con la versione nuova."""
+        if self.voce.sta_parlando:
+            self.root.after(300, self._riavvia_quando_ha_finito)
+            return
+        self._chiudi()
+        jarvis = os.path.join(os.path.dirname(os.path.abspath(__file__)), "jarvis.py")
+        subprocess.Popen([sys.executable, jarvis], env=dict(os.environ, JARVIS_PYTHON_312="1"))
 
     def _chiudi(self):
         self.stop.set()

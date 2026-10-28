@@ -48,8 +48,7 @@ Se avevi già la prima versione di Jarvis, Python e Ollama sono già installati:
    difficili: servono almeno 25 GB liberi sul disco e 32 GB di RAM. Se non lo installi, Jarvis funziona
    lo stesso, solo meno intelligente sulle domande difficili.
 4. **Jarvis**: scarica questa cartella `jarvis` sul PC (da GitHub: pulsante verde **Code → Download ZIP**,
-   poi estrai lo ZIP). Se stai aggiornando, copia nella cartella nuova la cartella `dati` di quella vecchia
-   (memoria, conversazioni, chiave e modelli già scaricati) e ricopia le tue modifiche a `config.json`.
+   poi estrai lo ZIP). Serve solo la prima volta: per gli aggiornamenti vedi [Aggiornare Jarvis](#aggiornare-jarvis).
 5. **Voce e ascolto**: servono **Python 3.12** (le librerie della voce non esistono ancora per le versioni
    più nuove) e alcune librerie. Nella cartella `jarvis` apri il Prompt dei comandi e scrivi:
 
@@ -77,6 +76,16 @@ Se avevi già la prima versione di Jarvis, Python e Ollama sono già installati:
   ascolta).
 
 Quando chiudi Jarvis, la memoria della scheda video viene liberata, così resta tutta per i giochi.
+
+## Aggiornare Jarvis
+
+Non serve più riscaricare lo ZIP: di' **"Jarvis, aggiornati"** (oppure scrivi `/aggiorna`). Jarvis scarica
+l'ultima versione da GitHub, sostituisce solo i file del programma e si riavvia da solo. Restano come prima:
+- la cartella `dati`: memoria, conversazioni, chiavi, voce scelta, modelli scaricati;
+- le tue impostazioni in `config.json`: dalla versione nuova arrivano solo le impostazioni che non avevi.
+
+All'avvio ti avvisa quando c'è una versione nuova (`"controlla_aggiornamenti": false` per non controllare).
+Si può aggiornare anche senza aprirlo: `py -3.12 aggiorna.py`.
 
 ## Comandi
 
@@ -107,6 +116,7 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/chiave`                     | inserisci la chiave API di Claude                   |
 | `/chiave elevenlabs`          | inserisci la chiave API di ElevenLabs (la voce)     |
 | `/costi`                      | quanto hai speso con Claude                         |
+| `/aggiorna`                   | installa l'ultima versione (dati e impostazioni restano) |
 | `/nuova`                      | nuova conversazione (la memoria permanente resta)   |
 | `/esci`                       | chiude Jarvis                                       |
 
@@ -142,7 +152,7 @@ Apri `config.json` con il Blocco note:
 | `effetto_voce`          | quanto effetto "intelligenza artificiale": da `0` (nessuno) a `1`; predefinito `0.6` |
 | `velocita_voce`         | `1` è normale; `0.9` più lenta, `1.1` più veloce                |
 | `limite_voce`           | quanti caratteri di una risposta legge al massimo: il resto resta nella finestra |
-| `modello_ascolto`       | `parakeet` (veloce) oppure `whisper` (un po' più preciso, più lento) |
+| `modello_ascolto`       | `parakeet` (veloce), `canary` (sempre in italiano) o `whisper` (più lento); li confronta `prova_ascolto.py` |
 | `microfono`             | una parte del nome del microfono da usare; vuoto = quello predefinito di Windows |
 | `attenzione`            | `"normale"`; `"alta"` (interviene ogni volta che vede un bisogno) oppure `"solo_nome"` (risponde solo se lo chiami) |
 | `attenzione_in_gioco`   | `true` per farlo rispondere senza il nome anche in modalità gioco |
@@ -380,6 +390,8 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
   blocca una libreria, prova un'altra voce con `py -3.12 prova_voci.py`.
 - **La voce di ElevenLabs non parla**: il messaggio nella finestra dice perché (chiave, caratteri finiti,
   internet). Intanto Jarvis parla con la voce di riserva. Per rifare la voce: `py -3.12 prova_voci.py`.
+- **Capisce male alcune parole**: lancia `py -3.12 prova_ascolto.py` e rispondi **s** al confronto. Dici tre
+  frasi, i modelli le trascrivono tutti, e tieni quello che sbaglia meno (Canary ascolta sempre in italiano).
 - **Non mi sente**: prova `py -3.12 prova_ascolto.py`. Se usa il microfono sbagliato, scrivi una parte del
   nome di quello giusto in `"microfono"` dentro `config.json` (il nome lo vedi all'inizio della prova).
 - **Mi sente ma non risponde**: controlla di dire "Jarvis" all'inizio o alla fine della frase.

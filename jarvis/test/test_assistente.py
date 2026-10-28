@@ -165,7 +165,7 @@ class TestModelloLocale(Base):
 
     def test_domanda_a_voce(self):
         j = self.jarvis()
-        list(j.gestisci("Che ore sono?", a_voce=True))
+        list(j.gestisci("Raccontami una barzelletta", a_voce=True))
         sistema = finti.FintoOllama.richieste[-1]["messages"][0]["content"]
         self.assertIn(cervello.ISTRUZIONI_VOCE, sistema)
         self.assertIn("Non puoi vedere lo schermo, sentire la voce", sistema)
@@ -174,6 +174,38 @@ class TestModelloLocale(Base):
         sistema = finti.FintoOllama.richieste[-1]["messages"][0]["content"]
         self.assertNotIn(cervello.ISTRUZIONI_VOCE, sistema)
         self.assertIn("Senti l'utente quando ti parla, anche senza chiamarti per nome", sistema)
+
+    def test_ora_e_data_subito(self):
+        j = self.jarvis()
+        prima = len(finti.FintoOllama.richieste)
+        testo, _, _ = self.chiedi(j, "Che ora sono?")  # come lo trascrive a volte il microfono
+        self.assertRegex(testo, r"^(Sono le \d{1,2}(:\d\d| in punto)|È (mezzanotte|l'una)( e \d+)?), signore\.$")
+        testo, _, _ = self.chiedi(j, "Jarvis, che giorno è oggi?")
+        self.assertTrue(testo.startswith("Oggi è ") and testo.endswith(", signore."))
+        self.assertEqual(len(finti.FintoOllama.richieste), prima)  # nessuna domanda al modello
+        self.assertEqual(j.cronologia[-1]["content"], testo)
+        self.chiedi(j, "Che ore sono a New York?")  # questa no: la risposta non è l'ora del PC
+        self.assertEqual(len(finti.FintoOllama.richieste), prima + 1)
+
+    def test_stato_interno_e_regole(self):
+        j = self.jarvis()
+        self.chiedi(j, "Come stai?")
+        sistema = finti.FintoOllama.richieste[-1]["messages"][0]["content"]
+        self.assertIn("Come stai adesso (usalo se te lo chiedono, con sincerità): sei acceso da", sistema)
+        self.assertIn("mai parole inventate", sistema)
+        self.assertIn("Utente: Che ore sono?", sistema)
+
+    def test_aggiornati(self):
+        import aggiorna
+
+        with mock.patch.object(aggiorna, "aggiorna", lambda: (2, "Aggiornamento installato: 2 file cambiati.")):
+            testo, avvisi, eventi = self.chiedi(self.jarvis(), "Jarvis, aggiornati")
+        self.assertEqual(testo, "Aggiornamento installato, signore: mi riavvio.")
+        self.assertIn("Aggiornamento installato: 2 file cambiati.", avvisi)
+        self.assertEqual(eventi[-1], "riavvia")
+        with mock.patch.object(aggiorna, "aggiorna", lambda: (0, "Jarvis era già aggiornato.")):
+            _, _, eventi = self.chiedi(self.jarvis(), "/aggiorna")
+        self.assertNotIn("riavvia", eventi)
 
     def test_attenzione_senza_nome(self):
         j = self.jarvis()

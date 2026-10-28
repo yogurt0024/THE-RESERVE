@@ -13,6 +13,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+import aggiorna
 import cervello_claude
 import strumenti
 from strumenti import ErroreStrumento
@@ -40,6 +41,7 @@ CONFIG_PREDEFINITA = {
     "limite_voce": 400,
     "modello_ascolto": "parakeet",
     "microfono": "",
+    "controlla_aggiornamenti": True,
     "attenzione": "normale",
     "attenzione_in_gioco": False,
     "emozione_voce": 0.6,
@@ -89,6 +91,7 @@ AIUTO = """Comandi:
 /gioco — modalità gioco: libera la scheda video (di nuovo /gioco per uscire)
 /ascolto — accende o spegne il microfono (solo nella finestra)
 /voce [nome] — accende o spegne la voce, oppure la cambia (solo nella finestra)
+/aggiorna — scarica e installa l'ultima versione di Jarvis (i tuoi dati restano)
 /nuova — nuova conversazione
 /esci — chiude
 Puoi anche chiedere normalmente, per esempio "che tempo fa a Cagliari?", "ricordati che..." oppure
@@ -115,9 +118,10 @@ STRUMENTO_AVANZATO = {"type": "function", "function": {
 
 ISTRUZIONI_VOCE = (
     "L'utente ti sta parlando a voce e sentirà la tua risposta letta ad alta voce: rispondi come in una "
-    "conversazione, con una-tre frasi brevi, senza elenchi, tabelle, simboli o link. Se serve di più, dai prima "
-    "l'essenziale e offri di approfondire. La richiesta è stata trascritta dal microfono e può contenere parole "
-    "sbagliate: interpreta il senso più probabile."
+    "conversazione, con una-tre frasi brevi e scorrevoli, senza elenchi, tabelle, simboli o link. Se l'argomento "
+    "richiederebbe di più, dai l'essenziale: l'utente chiederà se vuole saperne di più. La richiesta è stata "
+    "trascritta dal microfono e può contenere parole sbagliate o simili nel suono: interpreta il senso più "
+    "probabile, e se proprio non si capisce chiedi di ripetere."
 )
 
 
@@ -330,7 +334,8 @@ class PulitoreMarkdown:
         return uniti
 
 
-def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_avanzato=False, voce=False):
+def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_avanzato=False, voce=False,
+                      stato=""):
     """Le istruzioni che il modello riceve a ogni domanda (usate anche per creare il dataset di addestramento)."""
     adesso = adesso or datetime.now()
     nome, titolo = config["nome"], config["come_chiamarmi"]
@@ -347,6 +352,10 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
         if titolo else "- Non usare appellativi come signore o signora.",
         "- Scrivi in italiano corretto, in modo breve e preciso: di solito da una a tre frasi. "
         "Approfondisci solo se l'utente lo chiede.",
+        "- Rispondi a quello che ti è stato chiesto: se ti chiedono l'ora, di' l'ora. Aggiungi un consiglio solo "
+        "quando serve davvero (per esempio l'ombrello se pioverà), mai per riempire, e non chiudere con una "
+        "domanda se non ti serve una risposta.",
+        "- Usa solo parole italiane comuni e corrette: mai parole inventate o storpiate.",
         "- Quando hai eseguito un'azione, confermala in poche parole.",
         "- Niente emoji, niente frasi da servizio clienti (come \"con successo\" o \"spero di esserti stato "
         "utile\") e pochi punti esclamativi.",
@@ -358,6 +367,8 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
         f"{nome}: Salve{t}. " + ("Come posso esserle utile?" if lei else "Come posso aiutarti?"),
         "Utente: Apri YouTube",
         f"{nome}: Ecco YouTube{t}. Buona visione.",
+        "Utente: Che ore sono?",
+        f"{nome}: Sono le {adesso:%H:%M}{t}.",
         "Utente: Perché il cielo è blu?",
         f"{nome}: Per via della diffusione di Rayleigh{t}: l'aria disperde la luce blu molto più di quella rossa, "
         "così il blu arriva da ogni direzione del cielo.",
@@ -401,6 +412,10 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
         "- Non puoi vedere lo schermo, sentire la voce dell'utente, né leggere o modificare file.",
         "- Le tue conoscenze generali si fermano al tuo addestramento: per i fatti recenti servono gli strumenti.",
     ]
+    righe.append("- Se ti chiedono se sei cosciente o se provi emozioni, rispondi con sincerità: sei un programma e "
+                 "non hai coscienza né sentimenti, ma puoi dire come stai funzionando.")
+    if stato:
+        righe += ["", f"Come stai adesso (usalo se te lo chiedono, con sincerità): {stato}"]
     if fatti:
         righe += ["", "Cose che l'utente ti ha chiesto di ricordare (scritte in prima persona dall'utente):"]
         righe += [f"- {f}" for f in fatti]
@@ -453,6 +468,17 @@ class Assistente:
         self._fine_gioco_frase = re.compile(
             r"\b(?:disattiva|spegni|esci|termina|chiudi|togli|fine|basta|ferma|stop|finita|finisci|finito)\b",
             re.IGNORECASE)
+        self._ora_frase = re.compile(
+            inizio + r"(?:(?:scusa|senti|ehi|ok)[,!]?\s+)?(?:che or[ae] (?:sono|è|e|fa|fanno)|che ora (?:è|e|sono)|"
+            r"mi (?:dici|sai dire) (?:che or[ae] (?:sono|è)|l'ora)|sai (?:che or[ae] sono|l'ora)|dimmi l'ora)"
+            r"(?: adesso| ora)?[\s?.!]*$", re.IGNORECASE)
+        self._data_frase = re.compile(
+            inizio + r"(?:(?:scusa|senti|ehi|ok)[,!]?\s+)?(?:che giorno (?:è|e|siamo)(?: oggi)?|oggi che giorno "
+            r"(?:è|e)|che data (?:è|e)(?: oggi)?|quanti ne abbiamo(?: oggi)?)[\s?.!]*$", re.IGNORECASE)
+        self._aggiorna_frase = re.compile(
+            inizio + r"(?:aggiornati|aggiorna(?: te stesso| il programma| jarvis)?|(?:installa|scarica) (?:gli )?"
+            r"aggiornamenti|fai l'aggiornamento)[\s.!]*$", re.IGNORECASE)
+        self.acceso_da = time.monotonic()
         self.voce_attiva = False  # la finestra lo mette a True quando Jarvis può sentire e parlare
         self.modalita_gioco = False
         self._a_voce = False  # la domanda di adesso è arrivata dal microfono
@@ -621,12 +647,14 @@ class Assistente:
         _scrivi_json(FILE_CONVERSAZIONE, {"messaggi": self.cronologia})
 
     def _prompt_di_sistema(self, modello, a_voce=False):
+        stato = self.stato_interno()
         if modello.startswith("claude"):
-            sistema = prompt_di_sistema(self.config, modello, {"tools"}, self.fatti, voce=self.voce_attiva)
+            sistema = prompt_di_sistema(self.config, modello, {"tools"}, self.fatti, voce=self.voce_attiva,
+                                        stato=stato)
         else:
             avanzato = self._cervello_avanzato() is not None and modello != self.modello_grande
             sistema = prompt_di_sistema(self.config, modello, self.capacita.get(modello, ()), self.fatti,
-                                        cervello_avanzato=avanzato, voce=self.voce_attiva)
+                                        cervello_avanzato=avanzato, voce=self.voce_attiva, stato=stato)
         if a_voce:
             sistema += "\n\n" + ISTRUZIONI_VOCE
         return sistema + "\n\n" + ISTRUZIONI_INTERVENTO if self._spontaneo and a_voce else sistema
@@ -659,6 +687,13 @@ class Assistente:
         cambio = self._cambia_modo_di_parlare(testo)
         if cambio:
             yield ("info", cambio)
+        if self._aggiorna_frase.match(testo):
+            yield from self._aggiorna(testo)
+            return
+        ora_o_data = self._ora_o_data(testo)
+        if ora_o_data:  # non serve chiederlo al modello: si risponde subito e senza sbagliare
+            yield from self._risposta_fissa(testo, ora_o_data)
+            return
         if self._gioco_frase.search(testo) and not testo.endswith("?"):
             fine = bool(self._fine_gioco_frase.search(testo)) or "finito di giocare" in testo.lower()
             yield from self._risposta_fissa(testo, self.imposta_modalita_gioco(not fine))
@@ -698,6 +733,62 @@ class Assistente:
         except (ValueError, AttributeError):
             decisione = None
         return decisione if decisione in ("rivolta", "bisogno") else "ignora"
+
+    def _aggiorna(self, domanda=None):
+        """Installa l'ultima versione. Se qualcosa è cambiato, chiede all'interfaccia di riavviare Jarvis."""
+        titolo = self.config["come_chiamarmi"]
+        t = f", {titolo}" if titolo else ""
+        yield ("info", "Scarico l'ultima versione da GitHub: i tuoi dati e le tue impostazioni restano come sono.")
+        try:
+            cambiati, messaggio = aggiorna.aggiorna()
+        except Exception as e:  # rete, GitHub, archivio rovinato: non deve far cadere Jarvis
+            yield ("info", f"Aggiornamento non riuscito: {e}")
+            return
+        yield ("info", messaggio)
+        risposta = f"Aggiornamento installato{t}: mi riavvio." if cambiati else f"Sono già aggiornato{t}."
+        if domanda is None:
+            yield ("testo", risposta, False)
+        else:
+            yield from self._risposta_fissa(domanda, risposta)
+        if cambiati:
+            yield ("riavvia",)
+
+    def _ora_o_data(self, testo):
+        adesso = datetime.now()
+        titolo = self.config["come_chiamarmi"]
+        t = f", {titolo}" if titolo else ""
+        if self._ora_frase.match(testo):
+            h, m = adesso.hour, adesso.minute
+            if h in (0, 1):
+                ora = ("È mezzanotte" if h == 0 else "È l'una") + (f" e {m}" if m else "")
+            else:
+                ora = f"Sono le {h}:{m:02d}" if m else f"Sono le {h} in punto"
+            return f"{ora}{t}."
+        if self._data_frase.match(testo):
+            return f"Oggi è {strumenti.data_italiana(adesso)}{t}."
+        return None
+
+    def stato_interno(self):
+        """Come sta Jarvis adesso, in parole semplici (lo usa per rispondere a "come stai?")."""
+        minuti = int((time.monotonic() - self.acceso_da) // 60)
+        ore, minuti = divmod(minuti, 60)
+        durata = " e ".join(x for x in (
+            f"{ore} {'ora' if ore == 1 else 'ore'}" if ore else "",
+            f"{minuti} {'minuto' if minuti == 1 else 'minuti'}" if minuti else "") if x) or "meno di un minuto"
+        parti = [f"sei acceso da {durata}"]
+        in_corso = [c for c in self.compiti if c.stato == "in corso"]
+        in_coda = [c for c in self.compiti if c.stato == "in coda"]
+        if in_corso or in_coda:
+            parti.append(f"compiti in background: {len(in_corso)} in corso e {len(in_coda)} in coda")
+        else:
+            parti.append("nessun compito in background")
+        if self.modello_grande:
+            parti.append(f"il cervello grande {self.modello_grande} è "
+                         + ("al lavoro" if in_corso else "disponibile" if not self.modalita_gioco else "in pausa"))
+        if self.modalita_gioco:
+            parti.append("sei in modalità gioco: la scheda video è lasciata al gioco e rispondi con il processore")
+        parti.append("senti e parli a voce" if self.voce_attiva else "per ora comunichi solo per iscritto")
+        return "; ".join(parti) + "."
 
     def _risposta_fissa(self, domanda, risposta):
         """Una risposta che non serve chiedere al modello (per esempio la conferma della modalità gioco)."""
@@ -819,6 +910,8 @@ class Assistente:
                     problema = "" if self.claude.pronto or argomento == "locale" else \
                         f" Però Claude non è disponibile: {self.claude.problema}."
                     yield ("info", f"Cervello {argomento}: {spiegazione}{problema}{avviso}")
+            elif nome == "aggiorna":
+                yield from self._aggiorna()
             elif nome == "gioco":
                 yield ("info", self.imposta_modalita_gioco(not self.modalita_gioco))
             elif nome in ("voce", "ascolto"):

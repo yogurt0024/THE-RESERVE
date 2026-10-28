@@ -1,10 +1,12 @@
 """Prova l'orecchio di Jarvis: scrive tutto quello che sente dal microfono e quali frasi sono comandi.
 
 Uso:  py -3.12 prova_ascolto.py   (Ctrl+C per finire)
+Può anche confrontare i modelli di trascrizione sulla tua voce, per tenere quello che sbaglia meno.
 La prima volta installa le librerie che mancano e scarica i modelli (circa 700 MB). L'audio non viene salvato.
 """
 
 import importlib
+import json
 import subprocess
 import sys
 import time
@@ -43,6 +45,11 @@ def main():
     def avanzamento(file, scaricati, totale):
         print(f"\r{scarica.descrivi_avanzamento(file, scaricati, totale)}   ", end="", flush=True)
 
+    if input("Vuoi confrontare i modelli che capiscono la voce, per tenere quello che sbaglia meno? (s/n) ")\
+            .strip().lower() == "s":
+        confronta(avanzamento)
+        config = carica_config()
+
     modello = config.get("modello_ascolto") or ascolto.MODELLO_PREDEFINITO
     print(f"Preparo il modello che trascrive la voce ({ascolto.MODELLI_ASCOLTO[modello]['descrizione']})...")
     try:
@@ -74,6 +81,51 @@ def main():
     except KeyboardInterrupt:
         print("\nFine della prova.")
     orecchio.chiudi()
+
+
+def confronta(avanzamento):
+    """Registra tre frasi e le fa trascrivere a tutti i modelli: si vede chi capisce meglio la tua voce."""
+    import ascolto
+    import sounddevice
+
+    print("\nDi' tre frasi, una alla volta: per esempio \"Jarvis, che tempo fa domani a Cagliari?\", \"metti un timer")
+    print("di dieci minuti per la pasta\" e una frase con parole difficili per te. Hai 5 secondi per ognuna.")
+    registrazioni = []
+    for numero in range(1, 4):
+        input(f"\nPremi Invio e di' la frase {numero}... ")
+        audio = sounddevice.rec(5 * ascolto.FREQUENZA, samplerate=ascolto.FREQUENZA, channels=1, dtype="float32")
+        sounddevice.wait()
+        registrazioni.append(ascolto.normalizza(audio[:, 0]))
+    risultati = {}
+    for nome, info in ascolto.MODELLI_ASCOLTO.items():
+        print(f"\n{nome}: {info['descrizione']}")
+        try:
+            trascrivi = ascolto.carica_trascrittore(nome, avanzamento)
+        except Exception as e:  # download, librerie o modello: si passa al prossimo
+            print(f"\n  non funziona: {e}")
+            continue
+        tempi = []
+        for numero, audio in enumerate(registrazioni, 1):
+            inizio = time.perf_counter()
+            testo = trascrivi(audio)
+            tempi.append(time.perf_counter() - inizio)
+            print(f"\n  frase {numero}: {testo}", end="")
+        risultati[nome] = sum(tempi) / len(tempi)
+        print(f"\n  tempo medio per frase: {risultati[nome]:.1f} secondi")
+    if not risultati:
+        print("Nessun modello funziona.")
+        return
+    scelta = ""
+    while scelta not in risultati:
+        scelta = input(f"\nQuale capisce meglio? Scrivi il nome ({', '.join(risultati)}): ").strip().lower()
+    file_config = CARTELLA / "config.json"
+    try:
+        dati = json.loads(file_config.read_text(encoding="utf-8-sig"))
+    except (OSError, ValueError):
+        dati = {}
+    dati["modello_ascolto"] = scelta
+    file_config.write_text(json.dumps(dati, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    print(f"Fatto: Jarvis userà {scelta}.")
 
 
 if __name__ == "__main__":

@@ -35,6 +35,11 @@ MODELLI_ASCOLTO = {
                    "onnx/decoder_model_merged?int8.onnx*"],
         "descrizione": "Whisper: un po' più preciso con l'italiano, ma più lento (circa 1 GB)",
     },
+    "canary": {
+        "nome": "nemo-canary-1b-v2", "repo": "istupakov/canary-1b-v2-onnx", "quantizzazione": "int8", "lingua": "it",
+        "schemi": ["config.json", "vocab.txt", "encoder-model?int8.onnx*", "decoder-model?int8.onnx*"],
+        "descrizione": "Canary: ascolta sempre in italiano, preciso anche con le frasi brevi (circa 1 GB)",
+    },
 }
 RILEVATORE = ("istupakov/silero-vad-onnx", "silero_vad.onnx")
 
@@ -208,12 +213,30 @@ def carica_trascrittore(nome=MODELLO_PREDEFINITO, avanzamento=None):
 
 
 def ricampiona(audio, frequenza):
+    """Porta l'audio a 16000 Hz. Prima toglie le frequenze troppo alte, che altrimenti diventerebbero un fruscio
+    sopra la voce e confonderebbero la trascrizione."""
     import numpy as np
 
     if frequenza == FREQUENZA or len(audio) == 0:
         return audio
+    if frequenza > FREQUENZA:
+        taglio = 0.45 * FREQUENZA / frequenza  # poco sotto la metà dei 16000 Hz, rispetto alla frequenza di partenza
+        n = np.arange(-15, 16)
+        filtro = 2 * taglio * np.sinc(2 * taglio * n) * np.hamming(len(n))
+        audio = np.convolve(audio, filtro / filtro.sum(), mode="same")
     lunghezza = round(len(audio) * FREQUENZA / frequenza)
     return np.interp(np.linspace(0, len(audio) - 1, lunghezza), np.arange(len(audio)), audio).astype(np.float32)
+
+
+def normalizza(audio):
+    """Porta la voce sempre allo stesso volume: chi parla piano o lontano dal microfono viene capito meglio."""
+    import numpy as np
+
+    audio = audio - float(np.mean(audio))
+    picco = float(np.max(np.abs(audio))) if len(audio) else 0.0
+    if picco < 1e-4:
+        return audio.astype(np.float32)
+    return (audio * min(20.0, 0.7 / picco)).astype(np.float32)
 
 
 class Ascolto:
@@ -330,7 +353,7 @@ class Ascolto:
                 return
             audio, inizio, jarvis_parlava = elemento
             try:
-                testo = (self._trascrittore(audio) or "").strip()
+                testo = (self._trascrittore(normalizza(audio)) or "").strip()
             except Exception as e:  # una frase non trascritta non deve fermare l'ascolto
                 self.al_stato(f"non sono riuscito a trascrivere: {e}")
                 continue

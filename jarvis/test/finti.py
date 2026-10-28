@@ -241,3 +241,28 @@ class FintoElevenLabs(BaseHTTPRequestHandler):
             campioni = 10 * len(corpo["text"])
             return self._rispondi(200, struct.pack(f"<{campioni}h", *[3000] * campioni), "audio/pcm")
         self._errore(404, "voice_not_found")
+
+
+class FintoGitHub(BaseHTTPRequestHandler):
+    """Risponde come GitHub: l'ultima versione (sha) e il pacchetto ZIP del ramo."""
+
+    sha = "abc123"
+    archivio = b""
+
+    def log_message(self, *argomenti):
+        pass
+
+    def do_GET(self):
+        if "/commits/" in self.path:
+            corpo, tipo = json.dumps({"sha": FintoGitHub.sha}).encode(), "application/json"
+        elif "/zip/refs/heads/" in self.path:
+            corpo, tipo = FintoGitHub.archivio, "application/zip"
+        else:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", tipo)
+        self.send_header("Content-Length", str(len(corpo)))
+        self.end_headers()
+        self.wfile.write(corpo)
