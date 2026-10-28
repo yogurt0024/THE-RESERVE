@@ -230,12 +230,21 @@ class Finestra:
         if tipo == "testo":
             if not self.etichetta_scritta:
                 self._messaggio(self.nome, "", "jarvis")
+                self.chat.mark_set("risposta", "end-1c")  # da qui comincia il testo della risposta
+                self.chat.mark_gravity("risposta", "left")
                 self.etichetta_scritta = True
             self._scrivi(evento[1], "grassetto" if evento[2] else ())
         elif tipo == "info":
             self._riga(evento[1], "info")
         elif tipo == "pensiero":
             self.stato.configure(text="sto ragionando...")
+            self._riga("Sto ragionando...", "info")
+        elif tipo == "ritira":
+            if self.etichetta_scritta:  # il modello aveva scritto il suo ragionamento: si cancella
+                self.chat.configure(state="normal")
+                self.chat.delete("risposta", "end-1c")
+                self.chat.configure(state="disabled")
+                self.a_capo = True
         elif tipo == "pulisci":
             self._pulisci()
         elif tipo == "errore":

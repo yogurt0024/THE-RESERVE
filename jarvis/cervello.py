@@ -22,7 +22,8 @@ CONFIG_PREDEFINITA = {
     "nome": "Jarvis",
     "come_chiamarmi": "",
     "citta": "",
-    "modello": "qwen3:4b",
+    "modello": "qwen3:4b-instruct",
+    "modello_ragionamento": "qwen3:4b",
     "ragionamento": False,
     "internet": True,
     "messaggi_da_ricordare": 20,
@@ -100,6 +101,9 @@ class PulitoreMarkdown:
     """
 
     def __init__(self):
+        self.ricomincia()
+
+    def ricomincia(self):
         self.inizio_riga = True
         self.prefisso = ""  # simboli a inizio riga non ancora decifrati (#, *, -, spazi)
         self.asterischi = 0  # asterischi in sospeso: * o ** si capisce dal carattere dopo
@@ -203,6 +207,7 @@ class Assistente:
     ("testo", pezzo, grassetto)  un pezzo della risposta
     ("info", messaggio)          un avviso (strumento in uso, esito di un comando)
     ("pensiero",)                il modello sta ragionando
+    ("ritira",)                  togliere il testo della risposta mostrato finora (era un ragionamento)
     ("pulisci",)                 la conversazione è stata cancellata
     """
 
@@ -213,6 +218,10 @@ class Assistente:
         self.avvisa = avvisa  # chiamata dai timer, da un altro thread
         self.ragionamento = bool(config["ragionamento"])
         self.limite = max(2, int(config["messaggi_da_ricordare"]))
+        self.capacita = {}  # modello → cosa sa fare secondo Ollama ("tools", "thinking", ...)
+        self.modello_ragionamento = None  # modello per il ragionamento profondo, se disponibile
+        self.ragionamento_da_installare = ""
+        self.pensa_sempre = set()  # modelli che ragionano anche quando non glielo si chiede
         self.supporta_strumenti = False
         self.supporta_ragionamento = False
         self.fatti = _leggi_json(FILE_MEMORIA).get("fatti", [])
@@ -241,33 +250,52 @@ class Assistente:
                 "(l'icona del lama vicino all'orologio di Windows)."
             ) from None
 
-    def _carica(self, tieni_in_memoria=None, timeout=300):
+    def _carica(self, modello, tieni_in_memoria=None, timeout=300):
         """Senza messaggi, Ollama si limita a caricare il modello (o a scaricarlo con keep_alive 0)."""
-        dati = {"model": self.modello, "messages": [], "stream": False, "options": {"num_ctx": CONTESTO}}
+        dati = {"model": modello, "messages": [], "stream": False, "options": {"num_ctx": CONTESTO}}
         if tieni_in_memoria is not None:
             dati["keep_alive"] = tieni_in_memoria
         self._richiesta("/api/chat", dati, timeout).close()
 
+    def _modello_attuale(self):
+        return self.modello_ragionamento if self.ragionamento and self.supporta_ragionamento else self.modello
+
     def avvia(self):
         with self._richiesta("/api/tags", timeout=5) as risposta:
             installati = {m["name"] for m in json.load(risposta).get("models", [])}
-        if self.modello not in installati and f"{self.modello}:latest" not in installati:
+
+        def installato(modello):
+            return modello in installati or f"{modello}:latest" in installati
+
+        def capacita(modello):
+            with self._richiesta("/api/show", {"model": modello}, timeout=30) as risposta:
+                return set(json.load(risposta).get("capabilities") or [])
+
+        if not installato(self.modello):
             raise ErroreOllama(
                 f'Il modello "{self.modello}" non è installato. '
                 f"Apri il Prompt dei comandi e scrivi:\n    ollama pull {self.modello}"
             )
-        with self._richiesta("/api/show", {"model": self.modello}, timeout=30) as risposta:
-            capacita = set(json.load(risposta).get("capabilities") or [])
-        self.supporta_strumenti = "tools" in capacita
-        self.supporta_ragionamento = "thinking" in capacita
-        self._carica()
+        self.capacita[self.modello] = capacita(self.modello)
+        secondo = self.config["modello_ragionamento"]
+        if secondo and secondo != self.modello and installato(secondo):
+            self.capacita[secondo] = capacita(secondo)
+            self.modello_ragionamento = secondo
+        elif "thinking" in self.capacita[self.modello]:
+            self.modello_ragionamento = self.modello
+        elif secondo:
+            self.ragionamento_da_installare = secondo
+        self.supporta_strumenti = "tools" in self.capacita[self.modello]
+        self.supporta_ragionamento = self.modello_ragionamento is not None
+        self._carica(self._modello_attuale())
 
     def chiudi(self):
-        try:
-            # Libera la memoria della scheda video, così resta tutta per i giochi.
-            self._carica(tieni_in_memoria=0, timeout=5)
-        except ErroreOllama:
-            pass
+        # Libera la memoria della scheda video, così resta tutta per i giochi.
+        for modello in self.capacita:
+            try:
+                self._carica(modello, tieni_in_memoria=0, timeout=5)
+            except ErroreOllama:
+                pass
 
     def stato(self):
         righe = [f"{self.nome} è pronto (modello {self.modello})."]
@@ -276,10 +304,17 @@ class Assistente:
         else:
             righe.append(
                 "Questo modello non sa usare gli strumenti da solo: usa i comandi (/aiuto), "
-                "oppure installa qwen3:4b."
+                "oppure installa qwen3:4b-instruct."
             )
         if self.supporta_ragionamento:
-            righe.append(f"Ragionamento profondo: {'attivo' if self.ragionamento else 'spento'} (/pensa per cambiarlo).")
+            con = f" (con {self.modello_ragionamento})" if self.modello_ragionamento != self.modello else ""
+            stato = "attivo" if self.ragionamento else "spento"
+            righe.append(f"Ragionamento profondo{con}: {stato} (/pensa per cambiarlo).")
+        elif self.ragionamento_da_installare:
+            righe.append(
+                f"Per il ragionamento profondo installa {self.ragionamento_da_installare}: "
+                f"ollama pull {self.ragionamento_da_installare}"
+            )
         if self.fatti:
             quante = "1 cosa" if len(self.fatti) == 1 else f"{len(self.fatti)} cose"
             righe.append(f"Ho {quante} in memoria (/memoria per vederle).")
@@ -300,7 +335,7 @@ class Assistente:
     def _salva_conversazione(self):
         _scrivi_json(FILE_CONVERSAZIONE, {"messaggi": self.cronologia})
 
-    def _prompt_di_sistema(self):
+    def _prompt_di_sistema(self, modello):
         adesso = datetime.now()
         righe = [
             f"Sei {self.nome}, l'assistente personale dell'utente, ispirato al J.A.R.V.I.S. di Iron Man: "
@@ -317,11 +352,11 @@ class Assistente:
         righe += [
             "",
             "Come funzioni (usalo se l'utente ti chiede cosa sai fare o quali sono i tuoi limiti):",
-            f"- Sei un programma che gira interamente sul PC dell'utente, con il modello {self.modello} tramite Ollama.",
+            f"- Sei un programma che gira interamente sul PC dell'utente, con il modello {modello} tramite Ollama.",
             "- Hai una memoria permanente: ricordi le cose che l'utente ti chiede di ricordare "
             "e gli ultimi messaggi, anche dopo essere stato chiuso.",
         ]
-        if self.supporta_strumenti:
+        if "tools" in self.capacita.get(modello, ()):
             righe.append(
                 "- Hai degli strumenti: "
                 + ("meteo, Wikipedia, notizie, " if self.config["internet"] else "")
@@ -391,6 +426,8 @@ class Assistente:
                     self.ragionamento = not self.ragionamento
                     stato = "attivo: risposte più accurate ma più lente" if self.ragionamento else "spento"
                     yield ("info", f"Ragionamento profondo {stato}.")
+                elif self.ragionamento_da_installare:
+                    yield ("info", f"Prima installa il modello: ollama pull {self.ragionamento_da_installare}")
                 else:
                     yield ("info", f"Il modello {self.modello} non supporta il ragionamento profondo.")
             elif nome in ("meteo", "wiki", "notizie"):
@@ -448,17 +485,18 @@ class Assistente:
 
     def _chiedi(self, domanda, stop, con_strumenti=True):
         self.cronologia.append({"role": "user", "content": domanda})
-        messaggi = [{"role": "system", "content": self._prompt_di_sistema()}] + self.cronologia
+        modello = self._modello_attuale()
+        capacita = self.capacita.get(modello, set())
+        messaggi = [{"role": "system", "content": self._prompt_di_sistema(modello)}] + self.cronologia
         pulitore = PulitoreMarkdown()
         risposta = []  # testo pulito, per la cronologia
         interrotto = False
         try:
             for giro in range(GIRI_STRUMENTI + 1):
-                dati = {"model": self.modello, "messages": messaggi, "stream": True,
-                        "options": {"num_ctx": CONTESTO}}
-                if self.supporta_ragionamento:
-                    dati["think"] = self.ragionamento
-                if con_strumenti and self.supporta_strumenti and giro < GIRI_STRUMENTI:
+                dati = {"model": modello, "messages": messaggi, "stream": True, "options": {"num_ctx": CONTESTO}}
+                if "thinking" in capacita:
+                    dati["think"] = self.ragionamento or modello in self.pensa_sempre
+                if con_strumenti and "tools" in capacita and giro < GIRI_STRUMENTI:
                     dati["tools"] = strumenti.schemi(self.config)
                 contenuto, chiamate = yield from self._flusso(dati, pulitore, risposta, stop)
                 if not chiamate:
@@ -492,8 +530,18 @@ class Assistente:
             self._salva_conversazione()
 
     def _flusso(self, dati, pulitore, risposta, stop):
-        """Legge la risposta di Ollama mentre arriva. Restituisce (testo, strumenti chiesti)."""
-        contenuto, chiamate = [], []
+        """Legge la risposta di Ollama mentre arriva. Restituisce (testo, strumenti chiesti).
+
+        Alcuni modelli (come qwen3:4b) ragionano sempre, e a volte il ragionamento arriva
+        dentro il testo, chiuso da </think>. Quella parte non va mostrata.
+        """
+        modello = dati["model"]
+        grezzo = ""  # tutto il testo arrivato in questo giro
+        inizio = 0  # dove comincia la risposta vera dentro `grezzo` (dopo l'eventuale </think>)
+        mostrati = 0  # quanti caratteri di `grezzo` sono già stati mostrati
+        # Se il ragionamento potrebbe arrivare nel testo, il testo resta nascosto finché non è chiaro.
+        attesa = dati.get("think") is True or modello in self.pensa_sempre
+        chiamate = []
         pensiero_segnalato = False
         try:
             with self._richiesta("/api/chat", dati) as flusso:
@@ -506,18 +554,40 @@ class Assistente:
                     if "error" in parte:
                         raise ErroreOllama(parte["error"])
                     messaggio = parte.get("message", {})
-                    if messaggio.get("thinking") and not pensiero_segnalato:
-                        pensiero_segnalato = True
-                        yield ("pensiero",)
                     chiamate.extend(messaggio.get("tool_calls") or [])
+                    if messaggio.get("thinking"):
+                        attesa = False  # Ollama tiene il ragionamento separato: il testo è solo risposta
+                        if not pensiero_segnalato:
+                            pensiero_segnalato = True
+                            yield ("pensiero",)
                     if messaggio.get("content"):
-                        contenuto.append(messaggio["content"])
-                        yield from self._emetti(pulitore.aggiungi(messaggio["content"]), risposta)
+                        grezzo += messaggio["content"]
+                        fine_ragionamento = grezzo.find("</think>", inizio)
+                        if fine_ragionamento != -1:
+                            if mostrati > inizio:  # il ragionamento è già comparso: va tolto
+                                self.pensa_sempre.add(modello)
+                                risposta.clear()
+                                pulitore.ricomincia()
+                                yield ("ritira",)
+                            inizio = mostrati = fine_ragionamento + len("</think>")
+                            attesa = False
+                        elif mostrati == inizio and grezzo[inizio:].lstrip().startswith("<think>"):
+                            attesa = True
+                        if attesa:
+                            if not pensiero_segnalato:
+                                pensiero_segnalato = True
+                                yield ("pensiero",)
+                        elif len(grezzo) > mostrati:
+                            nuovo, mostrati = grezzo[mostrati:], len(grezzo)
+                            yield from self._emetti(pulitore.aggiungi(nuovo), risposta)
                     if parte.get("done"):
                         break
         except OSError:
             raise ErroreOllama("La connessione con Ollama si è interrotta.") from None
-        return "".join(contenuto), chiamate
+        if attesa and len(grezzo) > mostrati:
+            # Nessun </think> è arrivato: era tutta risposta.
+            yield from self._emetti(pulitore.aggiungi(grezzo[mostrati:]), risposta)
+        return grezzo[inizio:], chiamate
 
     @staticmethod
     def _emetti(segmenti, risposta):

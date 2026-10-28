@@ -27,6 +27,13 @@ def mostra(eventi, nome):
                     print()
                 print("» " + ("(sto ragionando...)" if evento[0] == "pensiero" else evento[1]))
                 a_capo = True
+            elif evento[0] == "ritira":
+                # Il Prompt dei comandi non può cancellare il testo già scritto: si va a capo.
+                if not a_capo:
+                    print()
+                print("» (fine del ragionamento, ecco la risposta)")
+                a_capo = True
+                etichetta = False
     except KeyboardInterrupt:
         eventi.close()
         if not a_capo:

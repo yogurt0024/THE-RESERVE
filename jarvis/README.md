@@ -13,7 +13,7 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 - **Ragionamento profondo**: per le domande difficili pensa prima di rispondere (più lento, più preciso).
 - **Sa cosa sa fare**: chiedigli "cosa sai fare?" o "quali sono i tuoi limiti?".
 
-Con il modello consigliato (`qwen3:4b`) usa gli strumenti **da solo**: basta chiedere
+Con il modello consigliato (`qwen3:4b-instruct`) usa gli strumenti **da solo**: basta chiedere
 "che tempo fa a Cagliari?", "chi era Leonardo da Vinci?", "apri youtube", "quanto fa 128 per 47?"
 o "metti un timer di 10 minuti per la pasta".
 
@@ -24,13 +24,16 @@ Se avevi già la prima versione di Jarvis, Python e Ollama sono già installati:
 1. **Python**: scaricalo da <https://www.python.org/downloads/> e installalo.
    Nella prima schermata spunta **"Add python.exe to PATH"**.
 2. **Ollama**: scaricalo da <https://ollama.com/download> e installalo.
-3. **Il "cervello"**: premi il tasto Windows, scrivi `cmd`, premi Invio e nella finestra nera scrivi:
+3. **Il "cervello"**: premi il tasto Windows, scrivi `cmd`, premi Invio e nella finestra nera scrivi
+   queste due righe (una alla volta, aspettando che la prima finisca):
 
    ```
+   ollama pull qwen3:4b-instruct
    ollama pull qwen3:4b
    ```
 
-   Scarica circa 2,5 GB.
+   Ognuno pesa circa 2,5 GB. Il primo risponde velocemente; il secondo serve solo per il
+   ragionamento profondo (se non lo installi, Jarvis funziona lo stesso, senza quella funzione).
 4. **Jarvis**: scarica questa cartella `jarvis` sul PC (da GitHub: pulsante verde **Code → Download ZIP**,
    poi estrai lo ZIP). Se stai aggiornando e avevi cambiato `config.json`, ricopia le tue modifiche
    nel nuovo file.
@@ -75,7 +78,8 @@ Apri `config.json` con il Blocco note:
 | `nome`                  | il nome dell'assistente (per esempio `"Friday"`)                |
 | `come_chiamarmi`        | come deve chiamarti (per esempio `"capo"`); vuoto = nessuno     |
 | `citta`                 | la tua città: la usa per il meteo quando non dici dove          |
-| `modello`               | quale modello usare (vedi sotto)                                |
+| `modello`               | il modello per le risposte normali (vedi sotto)                 |
+| `modello_ragionamento`  | il modello per il ragionamento profondo; vuoto = nessuno        |
 | `ragionamento`          | `true` per avere il ragionamento profondo già attivo all'avvio  |
 | `internet`              | `false` per non usare mai internet (niente meteo, Wikipedia, notizie) |
 | `messaggi_da_ricordare` | quanti messaggi recenti tiene a mente                           |
@@ -104,13 +108,18 @@ Poi potrai dire "apri curseforge".
 
 Con una scheda video da 6 GB:
 
-| Modello     | Peso   | Note                                                                  |
-|-------------|--------|-----------------------------------------------------------------------|
-| `qwen3:4b`  | 2,5 GB | **consigliato**: usa gli strumenti da solo, ha il ragionamento profondo |
-| `qwen3:8b`  | 5,2 GB | più intelligente, ma più lento: occupa quasi tutta la scheda video    |
-| `gemma3:4b` | 3,3 GB | italiano molto naturale, ma non usa gli strumenti da solo: servono i comandi |
+| Modello             | Peso   | Note                                                                 |
+|---------------------|--------|----------------------------------------------------------------------|
+| `qwen3:4b-instruct` | 2,5 GB | **consigliato per `modello`**: veloce, usa gli strumenti da solo     |
+| `qwen3:4b`          | 2,5 GB | **consigliato per `modello_ragionamento`**: ragiona sempre prima di rispondere, quindi è più lento |
+| `qwen3:8b`          | 5,2 GB | più intelligente, ma lento: occupa quasi tutta la scheda video       |
+| `gemma3:4b`         | 3,3 GB | italiano molto naturale, ma non usa gli strumenti da solo: servono i comandi |
 
 Per cambiarlo: `ollama pull nome-modello` nel Prompt dei comandi, poi cambia `modello` in `config.json`.
+
+Alcuni modelli (come `qwen3:4b`) ragionano sempre, anche quando non serve. Jarvis nasconde quel
+ragionamento: nella finestra scompare da solo; nel Prompt dei comandi può comparire una volta,
+poi Jarvis impara a nasconderlo.
 
 ## Privacy
 
@@ -131,4 +140,4 @@ Per cambiarlo: `ollama pull nome-modello` nel Prompt dei comandi, poi cambia `mo
 - **La finestra non si apre**: avvia con `python jarvis.py` dal Prompt dei comandi per vedere l'errore.
   Se dice che manca tkinter, reinstalla Python lasciando spuntata l'opzione "tcl/tk and IDLE".
 - **"Questo modello non sa usare gli strumenti da solo"**: stai usando un modello come `gemma3:4b`;
-  usa i comandi oppure passa a `qwen3:4b`.
+  usa i comandi oppure passa a `qwen3:4b-instruct`.
