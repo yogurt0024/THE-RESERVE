@@ -113,6 +113,18 @@ l'ultima versione da GitHub, sostituisce solo i file del programma e si riavvia 
 All'avvio ti avvisa quando c'è una versione nuova (`"controlla_aggiornamenti": false` per non controllare).
 Si può aggiornare anche senza aprirlo: `py -3.12 aggiorna.py`.
 
+**Se il repository su GitHub è privato**, Jarvis ha bisogno di una chiave di GitHub che può solo leggerlo
+(una volta sola):
+1. Su github.com clicca la tua foto in alto a destra, poi **Settings**, poi in fondo a sinistra **Developer
+   settings**, **Personal access tokens**, **Fine-grained tokens** e **Generate new token**.
+2. Nome: `Jarvis`. Scadenza: la più lunga che ti propone.
+3. In **Repository access** scegli **Only select repositories** e poi `THE-RESERVE`.
+4. In **Permissions**, alla voce **Contents**, scegli **Read-only**. Nient'altro.
+5. Premi **Generate token** e copia la chiave (inizia con `github_pat_`).
+6. In Jarvis scrivi `/chiave github` e incollala nella finestrella. Resta solo sul PC, in `dati`.
+
+Non mandarla a nessuno e non incollarla in chat. Quando scade, rifai questi passi.
+
 ## Comandi
 
 Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
@@ -152,6 +164,7 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/cervello <modalità>`        | `locale`, `ibrido` o `claude` (vedi sotto)          |
 | `/chiave`                     | inserisci la chiave API di Claude                   |
 | `/chiave elevenlabs`          | inserisci la chiave API di ElevenLabs (la voce)     |
+| `/chiave github`              | inserisci la chiave di GitHub (per aggiornarlo se il repository è privato) |
 | `/costi`                      | quanto hai speso con Claude                         |
 | `/aggiorna`                   | installa l'ultima versione (dati e impostazioni restano) |
 | `/nuova`                      | nuova conversazione (la memoria permanente resta)   |

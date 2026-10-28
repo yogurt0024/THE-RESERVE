@@ -11,6 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import aggiorna
 import iniziativa
 import notifiche
 import voce_elevenlabs
@@ -110,6 +111,10 @@ def terminale(config):
         if domanda.lower() == "/chiave":
             chiave = getpass.getpass("Incolla la chiave API di Claude (mentre la incolli non si vede): ")
             print(f"» {assistente.imposta_chiave(chiave)}\n")
+            continue
+        if domanda.lower() == "/chiave github":
+            chiave = getpass.getpass("Incolla la chiave di GitHub (mentre la incolli non si vede): ")
+            print(f"» {aggiorna.salva_chiave(chiave)}\n")
             continue
         if domanda.lower() == "/chiave elevenlabs":
             chiave = getpass.getpass("Incolla la chiave API di ElevenLabs (mentre la incolli non si vede): ")

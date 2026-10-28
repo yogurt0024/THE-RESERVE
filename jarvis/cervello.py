@@ -117,7 +117,7 @@ AIUTO = """Comandi:
 /dimentica <numero> — cancella un ricordo (/dimentica tutto li cancella tutti)
 /pensa — attiva o disattiva il ragionamento profondo
 /cervello locale, ibrido o claude — locale: tutto sul PC; ibrido: Claude per le cose difficili
-/chiave — inserisci la chiave API di Claude (/chiave elevenlabs per quella della voce)
+/chiave — inserisci la chiave API di Claude (/chiave elevenlabs per la voce, /chiave github per gli aggiornamenti)
 /costi — quanto hai speso con Claude
 /compiti — i compiti in background e a che punto sono
 /annulla <numero> — ferma un compito in background

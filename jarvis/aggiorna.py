@@ -3,6 +3,8 @@
 Uso:  py -3.12 aggiorna.py     (oppure in Jarvis: "Jarvis, aggiornati" o /aggiorna)
 Scarica da GitHub la versione nuova e sostituisce i file del programma. La cartella dati (memoria, chiavi,
 voci, modelli) non viene toccata; in config.json restano le tue impostazioni e si aggiungono solo quelle nuove.
+Se il repository su GitHub è privato serve una chiave di GitHub di sola lettura: si inserisce in Jarvis con
+/chiave github e resta sul PC, in dati/chiave_github.txt.
 """
 
 import io
@@ -27,14 +29,54 @@ def _file_versione():
     return CARTELLA / "dati" / "versione.txt"
 
 
-def _scarica(indirizzo, timeout=60):
+def _file_chiave():
+    return CARTELLA / "dati" / "chiave_github.txt"
+
+
+def leggi_chiave():
+    try:
+        return _file_chiave().read_text(encoding="utf-8-sig").strip()
+    except OSError:
+        return ""
+
+
+def salva_chiave(chiave):
+    """Controlla con GitHub che la chiave possa leggere il repository e la salva. Restituisce un messaggio."""
+    chiave = chiave.strip()
+    if not chiave or " " in chiave:
+        return "Questa non sembra una chiave di GitHub."
+    try:
+        _scarica(f"{_api()}/repos/{REPOSITORY}", timeout=15, chiave=chiave)
+    except ErroreAggiornamento as e:
+        return f"La chiave non funziona: {e}"
+    _file_chiave().parent.mkdir(exist_ok=True)
+    _file_chiave().write_text(chiave + "\n", encoding="utf-8")
+    return "Chiave di GitHub salvata sul PC: ora puoi aggiornarmi dicendo \"Jarvis, aggiornati\"."
+
+
+def _scarica(indirizzo, timeout=60, chiave=None):
+    chiave = chiave if chiave is not None else leggi_chiave()
     richiesta = urllib.request.Request(indirizzo, headers={"User-Agent": "Jarvis", "Accept": "*/*"})
+    if chiave:
+        # Solo a GitHub: se GitHub rimanda altrove (per esempio al server dei pacchetti) la chiave non lo segue.
+        richiesta.add_unredirected_header("Authorization", f"Bearer {chiave}")
     try:
         with urllib.request.urlopen(richiesta, timeout=timeout) as risposta:
             return risposta.read()
     except urllib.error.HTTPError as e:
-        privato = " Se il repository è privato, scarica lo ZIP a mano." if e.code == 404 else ""
-        raise ErroreAggiornamento(f"GitHub ha risposto con l'errore {e.code}.{privato}") from None
+        e.close()
+        if e.code == 401 and chiave:
+            raise ErroreAggiornamento("la chiave di GitHub non è valida o è scaduta: creane una nuova e "
+                                      "inseriscila con /chiave github") from None
+        if e.code == 404 and chiave:
+            raise ErroreAggiornamento("con questa chiave GitHub non mi fa vedere il repository: quando la crei, in "
+                                      f"\"Repository access\" scegli {REPOSITORY} e dai il permesso Contents in "
+                                      "lettura") from None
+        if e.code == 404:
+            raise ErroreAggiornamento("GitHub non mi fa vedere il repository di Jarvis, perché è privato. "
+                                      "Collega GitHub con /chiave github (vedi \"Aggiornare Jarvis\" nel README), "
+                                      "oppure rendi il repository pubblico") from None
+        raise ErroreAggiornamento(f"GitHub ha risposto con l'errore {e.code}") from None
     except OSError as e:
         raise ErroreAggiornamento(f"non riesco a collegarmi a GitHub (serve internet): {e}") from None
 
@@ -77,7 +119,10 @@ def aggiorna():
         versione = ultima_versione()
     except (ErroreAggiornamento, ValueError, KeyError):
         versione = ""  # si aggiorna lo stesso, ma senza ricordare quale versione è installata
-    archivio = zipfile.ZipFile(io.BytesIO(_scarica(f"{_zip()}/{REPOSITORY}/zip/refs/heads/{RAMO}", timeout=300)))
+    # Con la chiave il pacchetto si chiede all'API di GitHub (l'unica strada per i repository privati).
+    indirizzo = (f"{_api()}/repos/{REPOSITORY}/zipball/{RAMO}" if leggi_chiave() else
+                 f"{_zip()}/{REPOSITORY}/zip/refs/heads/{RAMO}")
+    archivio = zipfile.ZipFile(io.BytesIO(_scarica(indirizzo, timeout=300)))
     nomi = archivio.namelist()
     cervello = next((n for n in nomi if n.endswith("jarvis/cervello.py")), None)
     if cervello is None:

@@ -294,18 +294,37 @@ class FintoElevenLabs(BaseHTTPRequestHandler):
 
 
 class FintoGitHub(BaseHTTPRequestHandler):
-    """Risponde come GitHub: l'ultima versione (sha) e il pacchetto ZIP del ramo."""
+    """Risponde come GitHub: l'ultima versione (sha) e il pacchetto ZIP del ramo. Con `privato` il repository si
+    vede solo con la chiave "github-buona", e il pacchetto si scarica dall'API, che rimanda a un indirizzo
+    temporaneo (come fa GitHub)."""
 
     sha = "abc123"
     archivio = b""
+    privato = False
+    chiavi_ricevute = []  # l'intestazione Authorization arrivata a ogni indirizzo
 
     def log_message(self, *argomenti):
         pass
 
     def do_GET(self):
-        if "/commits/" in self.path:
+        autorizzazione = self.headers.get("Authorization")
+        FintoGitHub.chiavi_ricevute.append((self.path.split("?")[0], autorizzazione))
+        if self.path.startswith("/temporaneo/"):
+            corpo, tipo = FintoGitHub.archivio, "application/zip"
+        elif FintoGitHub.privato and autorizzazione != "Bearer github-buona":
+            self.send_response(401 if autorizzazione else 404)
+            self.end_headers()
+            return
+        elif "/zipball/" in self.path:
+            self.send_response(302)
+            self.send_header("Location", "/temporaneo/pacchetto.zip?token=usa-e-getta")
+            self.end_headers()
+            return
+        elif self.path.endswith("/THE-RESERVE"):
+            corpo, tipo = json.dumps({"private": FintoGitHub.privato}).encode(), "application/json"
+        elif "/commits/" in self.path:
             corpo, tipo = json.dumps({"sha": FintoGitHub.sha}).encode(), "application/json"
-        elif "/zip/refs/heads/" in self.path:
+        elif "/zip/refs/heads/" in self.path and not FintoGitHub.privato:
             corpo, tipo = FintoGitHub.archivio, "application/zip"
         else:
             self.send_response(404)

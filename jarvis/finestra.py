@@ -308,6 +308,9 @@ class Finestra:
         if minuscolo == "/chiave elevenlabs":
             self._chiedi_chiave_elevenlabs()
             return
+        if minuscolo == "/chiave github":
+            self._chiedi_chiave_github()
+            return
         if minuscolo == "/ascolto":
             self._cambia_microfono(not self.microfono)
             return
@@ -352,6 +355,14 @@ class Finestra:
                 self._prepara_voce(nuova=True)
 
         threading.Thread(target=salva, daemon=True).start()
+
+    def _chiedi_chiave_github(self):
+        chiave = simpledialog.askstring(
+            "Chiave di GitHub", "Incolla la chiave di GitHub (serve per aggiornarmi se il repository è privato).\n"
+                                "Resta salvata solo sul tuo PC.", show="*", parent=self.root)
+        if chiave:
+            threading.Thread(target=lambda: self.eventi.put(("info", aggiorna.salva_chiave(chiave))),
+                             daemon=True).start()
 
     def _lavora(self, testo, a_voce, spontaneo=False):
         try:
