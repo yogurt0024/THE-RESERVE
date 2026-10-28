@@ -8,7 +8,8 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 - **Ti sente e ti parla**: è sempre in ascolto, basta dire "Jarvis, ..." (vedi [Voce e ascolto](#voce-e-ascolto)).
   Capisce anche da solo quando parli con lui senza chiamarlo, e interviene se vede che ti serve aiuto.
   Parla con una voce fluida creata apposta per lui, e si interrompe se gli dici "Jarvis, basta".
-- **Risponde alle domande** in una finestra in stile Jarvis (oppure nel Prompt dei comandi).
+- **Si vede come il vero Jarvis**: niente chat, solo il suo reattore che ascolta, pensa e parla, con i sottotitoli,
+  l'ora, il meteo, lo stato del PC e i tuoi impegni intorno (vedi [Com'è fatto](#comè-fatto)).
 - **Memoria permanente**: si ricorda quello che gli dici con "ricordati che..." e anche la conversazione,
   pure dopo averlo chiuso.
 - **Informazioni aggiornate da internet**: meteo, Wikipedia, notizie e ricerche sul web che leggono davvero le
@@ -87,6 +88,20 @@ Se avevi già la prima versione di Jarvis, Python e Ollama sono già installati:
 
 Quando chiudi Jarvis, la memoria della scheda video viene liberata, così resta tutta per i giochi.
 
+## Com'è fatto
+
+Niente chat: c'è solo Jarvis.
+
+- **Al centro il reattore**: gira piano quando aspetta, si accende quando ti ascolta, accelera quando pensa e pulsa
+  con la voce quando parla. In modalità gioco diventa arancione; quando ha un avviso lampeggia in giallo.
+- **Sotto, i sottotitoli**: quello che hai chiesto e quello che risponde. Dopo un po' si spengono da soli.
+- **Intorno**: in alto l'ora e il meteo della tua città; a sinistra lo stato del PC (processore, memoria, scheda
+  video, disco); a destra cosa c'è in programma (compiti in background, promemoria e impegni del calendario).
+- **Per scrivere**: inizia semplicemente a digitare e compare la casella; Invio per mandare, Esc per chiudere.
+- **Testi lunghi** (l'aiuto, i resoconti dei compiti, le liste): si aprono in una scheda che chiudi con Esc.
+- **Tasti**: Esc interrompe Jarvis, F1 l'aiuto, F2 la cronologia della conversazione, F11 lo schermo intero.
+- **In basso** gli interruttori: microfono, voce, modalità gioco e ragionamento profondo (cliccali per cambiarli).
+
 ## Aggiornare Jarvis
 
 Non serve più riscaricare lo ZIP: di' **"Jarvis, aggiornati"** (oppure scrivi `/aggiorna`). Jarvis scarica
@@ -141,9 +156,8 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/nuova`                      | nuova conversazione (la memoria permanente resta)   |
 | `/esci`                       | chiude Jarvis                                       |
 
-Nella finestra, il pulsante **Ferma** (o il tasto Esc) interrompe una risposta e la voce; nel Prompt dei
-comandi si usa Ctrl+C. Sotto la casella di testo ci sono gli interruttori per microfono, voce, modalità gioco e
-ragionamento profondo.
+Nella finestra il tasto **Esc** interrompe una risposta e la voce; nel Prompt dei comandi si usa Ctrl+C.
+`/cronologia` (o F2) mostra la conversazione.
 
 Anche senza comandi puoi dire **"chiamami capo"** (o il tuo nome), **"non chiamarmi più signore"**,
 **"dammi del tu"** o **"dammi del lei"**: Jarvis cambia subito e se lo ricorda anche alla prossima apertura.
@@ -180,7 +194,7 @@ Apri `config.json` con il Blocco note:
 | `voce_riferimento`      | per la voce espressiva: un file WAV con la voce da imitare (vuoto = Nicola) |
 | `effetto_voce`          | quanto effetto "intelligenza artificiale": da `0` (nessuno) a `1`; predefinito `0.6` |
 | `velocita_voce`         | `1` è normale; `0.9` più lenta, `1.1` più veloce                |
-| `limite_voce`           | quanti caratteri di una risposta legge al massimo: il resto resta nella finestra |
+| `limite_voce`           | quanti caratteri di una risposta legge al massimo: il resto è nella cronologia (F2) |
 | `modello_ascolto`       | `parakeet` (veloce), `canary` (sempre in italiano) o `whisper` (più lento); li confronta `prova_ascolto.py` |
 | `microfono`             | una parte del nome del microfono da usare; vuoto = quello predefinito di Windows |
 | `attenzione`            | `"normale"`; `"alta"` (interviene ogni volta che vede un bisogno) oppure `"solo_nome"` (risponde solo se lo chiami) |
@@ -253,8 +267,8 @@ Jarvis è sempre in ascolto: il microfono resta acceso, ma risponde solo quando 
   mentre parla, lascia perdere la risposta di prima e passa a quella nuova.
 - **Compiti in background a voce**: "Jarvis, in background cercami le novità sul nuovo aggiornamento di
   Minecraft". Quando ha finito te lo dice a voce: "Ho terminato il compito 1, signore..."
-- **Modalità gioco**: "Jarvis, modalità gioco" e "Jarvis, fine modalità gioco" (oppure l'interruttore nella
-  finestra, o `/gioco`). Toglie i cervelli dalla scheda video, risponde con il processore e rimanda i compiti
+- **Modalità gioco**: "Jarvis, modalità gioco" e "Jarvis, fine modalità gioco" (oppure l'interruttore in basso
+  nella finestra, o `/gioco`); si accende anche da sola quando apri un gioco. Toglie i cervelli dalla scheda video, risponde con il processore e rimanda i compiti
   lunghi a fine partita. Il microfono resta acceso, così puoi chiamarlo anche mentre giochi.
 
 ### Capisce quando gli parli, anche senza il nome
@@ -271,7 +285,7 @@ nessuna parte. In **modalità gioco** risponde solo quando lo chiami per nome, c
 con i tuoi amici. Puoi regolare tutto con `attenzione` e `attenzione_in_gioco` in `config.json`.
 
 Quando gli parli risponde in modo più breve, adatto da ascoltare. Delle risposte lunghe legge l'inizio: il
-resto lo trovi scritto nella finestra.
+resto lo trovi nella cronologia (F2).
 
 ### La voce di Jarvis
 
@@ -322,7 +336,7 @@ voci maschili, e `effetto_voce` in `config.json` aggiunge un effetto in stile fi
 - Con le **cuffie** (come la tua HyperX) va tutto liscio. Con le casse funziona lo stesso: mentre parla,
   Jarvis ascolta solo le frasi con il suo nome, così non scambia la propria voce per un comando.
 - La prima volta che si avvia con la voce, Jarvis scarica i modelli che gli servono (circa 700 MB in tutto):
-  nella riga in alto a destra vedi a che punto è.
+  sotto il reattore vedi a che punto è.
 - Il modello che capisce la voce lavora sul processore, così la scheda video resta libera.
 
 ## Jarvis prende l'iniziativa
@@ -420,7 +434,7 @@ Jarvis può lavorare a una cosa mentre tu fai altro, anche mentre continui a par
 Puoi affidargli più compiti: li svolge uno dopo l'altro, perché il cervello grande occupa quasi tutta la
 memoria del PC. Intanto puoi continuargli a parlare: mentre il cervello grande lavora, quello veloce risponde
 usando il processore, così non deve aspettare il suo turno. Quando un compito finisce, Jarvis te lo dice a
-voce, scrive il resoconto nella conversazione e manda una **notifica di Windows**, così lo vedi anche se la
+voce, ti mostra il resoconto in una scheda e manda una **notifica di Windows**, così lo vedi anche se la
 finestra è nascosta (non durante "Non disturbare").
 Il resoconto entra nella conversazione: puoi chiedergli altro su quello che ha trovato.
 
@@ -503,8 +517,8 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
 ## Limiti
 
 - Legge i documenti ma non li modifica, e guarda lo schermo ma non usa mouse e tastiera al posto tuo.
-- Può capire male qualche parola, soprattutto con rumore o musica di sottofondo: per le cose importanti
-  guarda cosa ha scritto nella finestra.
+- Può capire male qualche parola, soprattutto con rumore o musica di sottofondo: quello che ha capito lo vedi
+  sopra i sottotitoli, tra « ».
 - È un modello piccolo: può sbagliare o inventare. Per le cose importanti controlla sempre.
 - Apre solo i programmi elencati in `config.json`.
 - Il calendario lo legge ma non lo modifica, e Spotify lo apre ma non sceglie al posto tuo se ci sono più

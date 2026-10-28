@@ -97,7 +97,7 @@ def _durata(minuti):
     return "1 minuto" if minuti == 1 else f"{_numero(minuti)} minuti"
 
 
-def meteo(citta):
+def _luogo(citta):
     citta = (citta or "").strip()
     if not citta:
         raise ErroreStrumento("non so di quale città vuoi il meteo.")
@@ -107,7 +107,20 @@ def meteo(citta):
     )).get("results")
     if not luoghi:
         raise ErroreStrumento(f'non trovo la città "{citta}".')
-    luogo = luoghi[0]
+    return luoghi[0]
+
+
+def meteo_breve(citta):
+    """(gradi, condizioni, città) di adesso: per il pannello della finestra."""
+    luogo = _luogo(citta)
+    adesso = json.loads(_scarica("https://api.open-meteo.com/v1/forecast", {
+        "latitude": luogo["latitude"], "longitude": luogo["longitude"],
+        "current": "temperature_2m,weather_code", "timezone": "auto"}))["current"]
+    return adesso["temperature_2m"], CONDIZIONI.get(adesso["weather_code"], ""), luogo.get("name", citta)
+
+
+def meteo(citta):
+    luogo = _luogo(citta)
     dati = json.loads(_scarica("https://api.open-meteo.com/v1/forecast", {
         "latitude": luogo["latitude"],
         "longitude": luogo["longitude"],
