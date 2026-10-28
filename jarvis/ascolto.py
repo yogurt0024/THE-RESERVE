@@ -220,15 +220,17 @@ class Ascolto:
     """Ascolta il microfono in background e chiama `al_comando(testo)` quando qualcuno parla a Jarvis.
 
     `testo` è "" quando l'utente ha detto solo "Jarvis": allora basta chiamare attendi_comando() e la frase
-    successiva sarà un comando anche senza il nome. `al_stato(testo)` descrive cosa sta facendo l'orecchio.
+    successiva sarà un comando anche senza il nome. Le altre frasi arrivano a `al_senza_nome`. `al_stato(testo)` descrive cosa sta facendo l'orecchio.
     `parlando()` dice se Jarvis sta parlando: in quel momento conta solo chi lo chiama per nome, così la sua
     stessa voce, uscendo dalle casse, non diventa un comando. Tutte le funzioni vengono chiamate da altri thread.
     """
 
-    def __init__(self, config, al_comando, al_stato=None, parlando=None, al_sentito=None,
+    def __init__(self, config, al_comando, al_stato=None, parlando=None, al_sentito=None, al_senza_nome=None,
                  sorgente=None, rilevatore=None, trascrittore=None):
         self.config = config
         self.al_comando = al_comando
+        # al_senza_nome(testo, secondi): una frase senza il nome; `secondi` da quando Jarvis ha smesso di parlare
+        self.al_senza_nome = al_senza_nome or (lambda testo, secondi: None)
         self.al_stato = al_stato or (lambda testo: None)
         self.al_sentito = al_sentito or (lambda testo: None)  # ogni frase trascritta, anche se non è un comando
         self.parlando = parlando or (lambda: False)
@@ -340,13 +342,17 @@ class Ascolto:
             return
         comando = estrai_comando(testo, self.config.get("nome", "Jarvis"))
         if comando is None:
-            # Senza il nome vale solo come risposta, subito dopo che Jarvis ha chiesto qualcosa.
-            if self._attesa_da is None or jarvis_parlava or inizio < self._attesa_da:
-                return
-            if inizio > max(self._attesa_da, self._fine_parlato) + self._attesa_secondi:
+            if jarvis_parlava:
+                return  # mentre parla conta solo chi lo chiama per nome: potrebbe essere la sua voce dalle casse
+            if self._attesa_da is not None and inizio >= self._attesa_da:
+                aperta = inizio <= max(self._attesa_da, self._fine_parlato) + self._attesa_secondi
                 self._attesa_da = None
-                return
-            comando = _pulisci(testo)
+                if aperta:  # subito dopo il suo "Sì?" o una sua domanda: è la risposta
+                    self.al_comando(_pulisci(testo))
+                    return
+            # Senza il nome: decide chi la riceve se è rivolta a Jarvis (o se l'utente ha bisogno di lui).
+            self.al_senza_nome(_pulisci(testo), inizio - self._fine_parlato if self._fine_parlato else None)
+            return
         self._attesa_da = None
         self.al_comando(comando)
 

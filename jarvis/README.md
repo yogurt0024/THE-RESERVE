@@ -6,7 +6,8 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 ## Cosa sa fare
 
 - **Ti sente e ti parla**: è sempre in ascolto, basta dire "Jarvis, ..." (vedi [Voce e ascolto](#voce-e-ascolto)).
-  Risponde a voce, con una voce in stile Jarvis, e si interrompe se gli dici "Jarvis, basta".
+  Capisce anche da solo quando parli con lui senza chiamarlo, e interviene se vede che ti serve aiuto.
+  Risponde con una voce espressiva che recita, e si interrompe se gli dici "Jarvis, basta".
 - **Risponde alle domande** in una finestra in stile Jarvis (oppure nel Prompt dei comandi).
 - **Memoria permanente**: si ricorda quello che gli dici con "ricordati che..." e anche la conversazione,
   pure dopo averlo chiuso.
@@ -60,7 +61,8 @@ Se avevi già la prima versione di Jarvis, Python e Ollama sono già installati:
    ```
 
    - Il primo comando installa Python 3.12 accanto alla versione che hai già (se l'hai già fatto, saltalo).
-   - `prova_voci.py` ti fa sentire le voci e salva quella che scegli.
+   - `prova_voci.py` ti fa sentire le voci e salva quella che scegli. La voce espressiva la senti con tre livelli
+     di emozione; la prima volta scarica circa 1,5 GB.
    - `prova_ascolto.py` scarica il modello che capisce la voce (circa 700 MB, una volta sola) e scrive quello
      che sente dal microfono: prova a dire "Jarvis, che ore sono?". Si chiude con Ctrl+C.
 
@@ -130,12 +132,16 @@ Apri `config.json` con il Blocco note:
 | `compiti_in_background` | `false` per aspettare la risposta del cervello grande invece di continuare a parlare |
 | `ascolto`               | `false` per tenere spento il microfono                          |
 | `parla`                 | `"sempre"`, `"a_voce"` (risponde a voce solo quando gli parli) oppure `"mai"` |
-| `voce`                  | `riccardo`, `nicola`, `diego` o `giuseppe` (le sceglie `prova_voci.py`) |
+| `voce`                  | `espressiva`, `riccardo`, `nicola`, `diego` o `giuseppe` (le sceglie `prova_voci.py`) |
+| `emozione_voce`         | per la voce espressiva: da `0` (calma) a `1` (teatrale)          |
+| `voce_riferimento`      | per la voce espressiva: un file WAV con la voce da imitare (vuoto = Nicola) |
 | `effetto_voce`          | quanto effetto "intelligenza artificiale": da `0` (nessuno) a `1`; predefinito `0.6` |
 | `velocita_voce`         | `1` è normale; `0.9` più lenta, `1.1` più veloce                |
 | `limite_voce`           | quanti caratteri di una risposta legge al massimo: il resto resta nella finestra |
 | `modello_ascolto`       | `parakeet` (veloce) oppure `whisper` (un po' più preciso, più lento) |
 | `microfono`             | una parte del nome del microfono da usare; vuoto = quello predefinito di Windows |
+| `attenzione`            | `"normale"`; `"alta"` (interviene ogni volta che vede un bisogno) oppure `"solo_nome"` (risponde solo se lo chiami) |
+| `attenzione_in_gioco`   | `true` per farlo rispondere senza il nome anche in modalità gioco |
 | `cervello`              | `"locale"`, `"ibrido"` o `"claude"` (vedi sotto)                |
 | `modello_claude`        | quale modello di Claude usare (predefinito `claude-opus-5-5`)   |
 | `sforzo_claude`         | quanto ragiona Claude: `low`, `medium`, `high` (più alto = più preciso e più caro) |
@@ -199,20 +205,42 @@ Jarvis è sempre in ascolto: il microfono resta acceso, ma risponde solo quando 
   finestra, o `/gioco`). Toglie i cervelli dalla scheda video, risponde con il processore e rimanda i compiti
   lunghi a fine partita. Il microfono resta acceso, così puoi chiamarlo anche mentre giochi.
 
+### Capisce quando gli parli, anche senza il nome
+
+Non serve dire sempre "Jarvis". Quando sente una frase senza il suo nome, il cervello veloce guarda la frase e
+la conversazione appena avuta e decide:
+- **è per lui** ("E domani invece?" subito dopo il meteo, "Apri Spotify"): risponde normalmente;
+- **ti serve aiuto** anche se non parlavi con lui ("Accidenti, quanto fa 15 per 32?", "Devo ricordarmi di chiamare
+  la nonna alle sei"): interviene con discrezione, al massimo una volta ogni minuto e mezzo;
+- **non lo riguarda** (parli con qualcuno, sei in chiamata, commenti il gioco): resta in silenzio.
+
+Nel dubbio sta zitto: intervenire a sproposito è peggio. Le frasi che non lo riguardano non vengono salvate da
+nessuna parte. In **modalità gioco** risponde solo quando lo chiami per nome, così non si intromette mentre parli
+con i tuoi amici. Puoi regolare tutto con `attenzione` e `attenzione_in_gioco` in `config.json`.
+
 Quando gli parli risponde in modo più breve, adatto da ascoltare. Delle risposte lunghe legge l'inizio: il
 resto lo trovi scritto nella finestra.
 
 **Le voci** (`py -3.12 prova_voci.py` per sentirle e scegliere, oppure `/voce nome` in Jarvis):
 
-| Voce       | Dove funziona       | Com'è                                                        |
-|------------|---------------------|--------------------------------------------------------------|
-| `riccardo` | sul PC              | predefinita: veloce e privata, un po' metallica               |
-| `nicola`   | sul PC              | più naturale, privata; da scaricare una volta (circa 340 MB) |
-| `diego`    | via internet        | voce di Microsoft, molto naturale                            |
-| `giuseppe` | via internet        | voce di Microsoft, molto naturale                            |
+| Voce         | Dove funziona       | Com'è                                                        |
+|--------------|---------------------|--------------------------------------------------------------|
+| `espressiva` | sul PC              | **recita con emozione**: la più simile a Jarvis (circa 1,5 GB, serve un processore veloce) |
+| `riccardo`   | sul PC              | predefinita: veloce e privata, ma piatta                     |
+| `nicola`     | sul PC              | più naturale, privata; da scaricare una volta (circa 340 MB) |
+| `diego`      | via internet        | voce di Microsoft, molto naturale                            |
+| `giuseppe`   | via internet        | voce di Microsoft, molto naturale                            |
+
+**La voce espressiva** usa Chatterbox, un modello che non si limita a leggere: dà intonazione ed emozione alle
+frasi. Funziona sul processore con le stesse librerie dell'ascolto, quindi non serve installare altro. Ne imita il
+timbro da una voce di riferimento: la prima volta Jarvis la registra da solo con la voce di Nicola (o di Riccardo).
+- `emozione_voce` va da `0` (calma, neutra) a `1` (molto teatrale); predefinito `0.6`.
+- `voce_riferimento` può indicare un tuo file WAV di 5-10 secondi, per esempio la tua voce. Usa solo voci di chi
+  è d'accordo: non quella dell'attore o del doppiatore dei film, che sono persone reali.
+- Su un processore lento può fare piccole pause tra una frase e l'altra: `prova_voci.py` ti dice quanto ci mette.
 
 La voce dei film non si può copiare: è quella di persone reali (l'attore e il suo doppiatore). Queste sono
-voci maschili con un effetto in stile film, regolabile con `effetto_voce` in `config.json`.
+voci maschili, e `effetto_voce` in `config.json` aggiunge un effetto in stile film.
 
 **Consigli**
 - Con le **cuffie** (come la tua HyperX) va tutto liscio. Con le casse funziona lo stesso: mentre parla,
@@ -294,7 +322,8 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
 - Con il cervello `locale`, l'intelligenza artificiale, la memoria e le conversazioni restano sul tuo PC
   (nella cartella `dati`).
 - **Il microfono**: l'audio viene analizzato sul PC e subito buttato. Non viene mai salvato né inviato a
-  nessuno. Con l'interruttore **Microfono** spento non ascolta proprio.
+  nessuno. Con l'interruttore **Microfono** spento non ascolta proprio. Le frasi dette senza il suo nome le valuta
+  il cervello veloce, sul PC; se non lo riguardano, vengono dimenticate subito.
 - **La voce**: `riccardo` e `nicola` funzionano sul PC. Con `diego` e `giuseppe` il testo da leggere viene
   inviato a Microsoft.
 - Quando risponde **Claude**, la conversazione recente e le tue informazioni in memoria vengono inviate

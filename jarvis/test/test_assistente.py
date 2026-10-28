@@ -173,7 +173,25 @@ class TestModelloLocale(Base):
         self.chiedi(j, "E domani?")
         sistema = finti.FintoOllama.richieste[-1]["messages"][0]["content"]
         self.assertNotIn(cervello.ISTRUZIONI_VOCE, sistema)
-        self.assertIn("Senti l'utente quando ti chiama per nome", sistema)
+        self.assertIn("Senti l'utente quando ti parla, anche senza chiamarti per nome", sistema)
+
+    def test_attenzione_senza_nome(self):
+        j = self.jarvis()
+        self.chiedi(j, "Che tempo fa a Cagliari?")
+        self.assertEqual(j.valuta_frase("Mamma, arrivo!", 3), "ignora")
+        self.assertEqual(j.valuta_frase("E domani invece?", 3), "rivolta")
+        richiesta = finti.FintoOllama.richieste[-1]
+        self.assertEqual(richiesta["format"], cervello.SCHEMA_ATTENZIONE)
+        self.assertIs(richiesta["think"], False)
+        self.assertEqual(richiesta["options"]["temperature"], 0)
+        self.assertIn("Adesso a Cagliari fa 22°C.", richiesta["messages"][1]["content"])  # sa di cosa si parlava
+        self.assertIn("ha finito di parlare 3 secondi fa", richiesta["messages"][1]["content"])
+        self.assertEqual(j.valuta_frase("Accidenti, quanto fa 15 per 32?"), "bisogno")
+        # Interviene di sua iniziativa: con discrezione, e dopo torna normale.
+        list(j.gestisci("Accidenti, quanto fa 15 per 32?", a_voce=True, spontaneo=True))
+        self.assertIn(cervello.ISTRUZIONI_INTERVENTO, finti.FintoOllama.richieste[-1]["messages"][0]["content"])
+        self.chiedi(j, "Grazie")
+        self.assertNotIn(cervello.ISTRUZIONI_INTERVENTO, finti.FintoOllama.richieste[-1]["messages"][0]["content"])
 
     def test_modalita_gioco(self):
         j = self.jarvis()

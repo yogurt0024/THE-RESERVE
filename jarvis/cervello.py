@@ -40,6 +40,10 @@ CONFIG_PREDEFINITA = {
     "limite_voce": 400,
     "modello_ascolto": "parakeet",
     "microfono": "",
+    "attenzione": "normale",
+    "attenzione_in_gioco": False,
+    "emozione_voce": 0.6,
+    "voce_riferimento": "",
     "modello_claude": "claude-opus-5-5",
     "sforzo_claude": "medium",
     "mostra_costi": True,
@@ -112,6 +116,30 @@ ISTRUZIONI_VOCE = (
     "l'essenziale e offri di approfondire. La richiesta è stata trascritta dal microfono e può contenere parole "
     "sbagliate: interpreta il senso più probabile."
 )
+
+
+ISTRUZIONI_INTERVENTO = (
+    "L'utente non si è rivolto a te: questa frase l'ha detta tra sé o parlando con altri, ma sembra aver bisogno di "
+    "qualcosa che puoi fare. Intervieni con discrezione, come farebbe Jarvis: una sola frase breve che dà o offre "
+    "l'aiuto, per esempio \"Se posso permettermi: 17 per 23 fa 391.\" Niente prediche e niente domande inutili."
+)
+
+ISTRUZIONI_ATTENZIONE = """Sei il modulo di attenzione di {nome}, un assistente vocale che vive sul PC dell'utente, come il \
+J.A.R.V.I.S. di Iron Man. Il microfono ha sentito una frase detta nella stanza SENZA il nome "{nome}". Decidi:
+- "rivolta": la frase è rivolta all'assistente: una domanda o una richiesta che ha senso fare a lui (che ore sono, \
+apri, metti, cerca, spiegami, ricordami...), oppure il seguito della conversazione appena avuta con lui.
+- "bisogno": la frase non è rivolta all'assistente (l'utente parla da solo o con altri), ma rivela un bisogno \
+concreto che l'assistente può risolvere subito: un'informazione, un calcolo, un promemoria, aprire qualcosa.
+- "ignora": tutto il resto: chiacchiere con altre persone o in una chiamata, frasi di un gioco, esclamazioni, \
+canzoni, televisione, frasi a metà o senza senso.
+Nel dubbio scegli "ignora": intervenire a sproposito è peggio che restare in silenzio.
+Esempi: "Mamma, arrivo!" → ignora. "Vai a destra, c'è un creeper!" → ignora. "Apri Spotify" → rivolta. \
+"E a Milano invece?" subito dopo che {nome} ha parlato del meteo → rivolta. "Accidenti, quanto fa 15 per 32?" → \
+bisogno. "Devo ricordarmi di chiamare la nonna alle sei" → bisogno. "Che fame..." → ignora.
+Rispondi solo con il JSON richiesto."""
+
+SCHEMA_ATTENZIONE = {"type": "object", "properties": {
+    "decisione": {"type": "string", "enum": ["rivolta", "bisogno", "ignora"]}}, "required": ["decisione"]}
 
 
 ISTRUZIONI_COMPITO = (
@@ -365,8 +393,8 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
     if not config["internet"]:
         righe.append("- Non sei collegato a internet.")
     righe += [
-        "- Senti l'utente quando ti chiama per nome e gli rispondi a voce. Non puoi vedere lo schermo, né leggere "
-        "o modificare file." if voce else
+        "- Senti l'utente quando ti parla, anche senza chiamarti per nome, e gli rispondi a voce. Non puoi vedere "
+        "lo schermo, né leggere o modificare file." if voce else
         "- Non puoi vedere lo schermo, sentire la voce dell'utente, né leggere o modificare file.",
         "- Le tue conoscenze generali si fermano al tuo addestramento: per i fatti recenti servono gli strumenti.",
     ]
@@ -425,6 +453,7 @@ class Assistente:
         self.voce_attiva = False  # la finestra lo mette a True quando Jarvis può sentire e parlare
         self.modalita_gioco = False
         self._a_voce = False  # la domanda di adesso è arrivata dal microfono
+        self._spontaneo = False  # e non era rivolta a Jarvis: interviene perché l'utente sembra averne bisogno
 
     # --- Ollama ---
 
@@ -595,7 +624,9 @@ class Assistente:
             avanzato = self._cervello_avanzato() is not None and modello != self.modello_grande
             sistema = prompt_di_sistema(self.config, modello, self.capacita.get(modello, ()), self.fatti,
                                         cervello_avanzato=avanzato, voce=self.voce_attiva)
-        return sistema + "\n\n" + ISTRUZIONI_VOCE if a_voce else sistema
+        if a_voce:
+            sistema += "\n\n" + ISTRUZIONI_VOCE
+        return sistema + "\n\n" + ISTRUZIONI_INTERVENTO if self._spontaneo and a_voce else sistema
 
     def imposta_chiave(self, chiave):
         """Salva la chiave API di Claude (la chiedono la finestra o la modalità testo, senza mostrarla)."""
@@ -605,10 +636,11 @@ class Assistente:
 
     # --- Conversazione ---
 
-    def gestisci(self, testo, stop=None, a_voce=False):
+    def gestisci(self, testo, stop=None, a_voce=False, spontaneo=False):
         """Risponde a un messaggio dell'utente (domanda o /comando). `stop` è un threading.Event.
 
         `a_voce` vuol dire che la richiesta arriva dal microfono: la risposta sarà breve, da ascoltare.
+        `spontaneo` vuol dire che l'utente non parlava a Jarvis, ma valuta_frase() ha visto che gli serve aiuto.
         """
         testo = testo.strip()
         if testo.startswith("/"):
@@ -629,7 +661,40 @@ class Assistente:
             yield from self._risposta_fissa(testo, self.imposta_modalita_gioco(not fine))
             return
         in_background = bool(self._in_background_frase.search(testo)) and not testo.endswith("?")
-        yield from self._chiedi(testo, stop, in_background=in_background, a_voce=a_voce)
+        self._spontaneo = spontaneo
+        try:
+            yield from self._chiedi(testo, stop, in_background=in_background, a_voce=a_voce)
+        finally:
+            self._spontaneo = False
+
+    def valuta_frase(self, testo, secondi=None):
+        """Una frase sentita senza il nome: è rivolta a Jarvis ("rivolta"), rivela un bisogno a cui può pensare
+        lui ("bisogno") oppure non lo riguarda ("ignora")? Decide il cervello veloce, guardando la conversazione.
+
+        `secondi` è da quanto Jarvis ha smesso di parlare (None se non ha parlato).
+        """
+        recenti = [f"{'Utente' if m['role'] == 'user' else self.nome}: {m['content'].split(SEPARATORE_DATI)[0][:300]}"
+                   for m in self.cronologia[-4:]]
+        if secondi is not None and secondi < 30:
+            quando = f"{self.nome} ha finito di parlare {round(secondi)} secondi fa."
+        else:
+            quando = f"{self.nome} non sta parlando con l'utente in questo momento."
+        dati = {"model": self.modello, "stream": False, "format": SCHEMA_ATTENZIONE,
+                "options": dict(self._opzioni(self.modello), temperature=0, num_predict=40),
+                "messages": [
+                    {"role": "system", "content": ISTRUZIONI_ATTENZIONE.format(nome=self.nome)},
+                    {"role": "user", "content": "Conversazione recente con l'assistente:\n"
+                                                + ("\n".join(recenti) or "(nessuna)")
+                                                + f"\n\n{quando}\nFrase appena sentita: \"{testo}\""}]}
+        if "thinking" in self.capacita.get(self.modello, ()):
+            dati["think"] = False
+        with self._richiesta("/api/chat", dati, timeout=60) as risposta:
+            contenuto = json.load(risposta).get("message", {}).get("content", "")
+        try:
+            decisione = json.loads(contenuto).get("decisione")
+        except (ValueError, AttributeError):
+            decisione = None
+        return decisione if decisione in ("rivolta", "bisogno") else "ignora"
 
     def _risposta_fissa(self, domanda, risposta):
         """Una risposta che non serve chiedere al modello (per esempio la conferma della modalità gioco)."""

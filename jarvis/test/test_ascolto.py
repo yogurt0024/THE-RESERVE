@@ -73,6 +73,7 @@ class TestAscolto(unittest.TestCase):
     def setUp(self):
         self.blocchi = queue.Queue()
         self.comandi = queue.Queue()
+        self.senza_nome = queue.Queue()
         self.frasi_dette = queue.Queue()  # cosa "si sente" nelle frasi che arrivano, in ordine
         self.jarvis_parla = False
 
@@ -85,6 +86,7 @@ class TestAscolto(unittest.TestCase):
 
     def orecchio(self):
         o = ascolto.Ascolto({"nome": "Jarvis"}, al_comando=self.comandi.put, parlando=lambda: self.jarvis_parla,
+                            al_senza_nome=lambda testo, secondi: self.senza_nome.put((testo, secondi)),
                             sorgente=self.sorgente(), rilevatore=RilevatoreFinto(),
                             trascrittore=lambda audio: self.frasi_dette.get_nowait())
         o.avvia()
@@ -110,8 +112,9 @@ class TestAscolto(unittest.TestCase):
         self.orecchio()
         self.parla("Jarvis, che tempo fa?")
         self.assertEqual(self.comando(), "Che tempo fa?")
-        self.parla("Passami il sale")  # non è rivolto a Jarvis
+        self.parla("Passami il sale")  # senza il nome: deciderà il cervello se era per Jarvis
         self.nessun_comando()
+        self.assertEqual(self.senza_nome.get(timeout=5), ("Passami il sale", None))
 
     def test_solo_il_nome_poi_la_richiesta(self):
         o = self.orecchio()
@@ -122,6 +125,7 @@ class TestAscolto(unittest.TestCase):
         self.assertEqual(self.comando(), "Apri YouTube")
         self.parla("e anche la calcolatrice")  # l'attesa vale per una frase sola
         self.nessun_comando()
+        self.assertEqual(self.senza_nome.get(timeout=5)[0], "E anche la calcolatrice")
 
     def test_mentre_jarvis_parla_conta_solo_il_nome(self):
         o = self.orecchio()
@@ -129,6 +133,7 @@ class TestAscolto(unittest.TestCase):
         self.jarvis_parla = True
         self.parla("Sì, signore?")  # la sua stessa voce che esce dalle casse
         self.nessun_comando()
+        self.assertTrue(self.senza_nome.empty())  # non va nemmeno valutata
         self.parla("Jarvis, basta")
         self.assertEqual(self.comando(), "Basta")
 

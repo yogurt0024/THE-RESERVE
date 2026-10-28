@@ -9,6 +9,7 @@ import queue
 import random
 import sys
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from tkinter import messagebox, simpledialog
@@ -33,6 +34,7 @@ COLORI = {
 }
 CARATTERE = "Segoe UI"
 LIMITE_AVVISI_A_VOCE = 350  # dei resoconti dei compiti si legge l'inizio: il resto è nella finestra
+PAUSA_TRA_INTERVENTI = 90  # secondi: senza essere chiamato, Jarvis non interviene più spesso di così
 
 
 def _mescola(colore1, colore2, quota):
@@ -68,6 +70,8 @@ class Finestra:
         self.domanda_a_voce = False
         self.ultima_risposta = ""
         self.comando_in_attesa = None  # un comando a voce arrivato mentre Jarvis era occupato
+        self.valutando = False  # il cervello sta decidendo se una frase senza il nome era per lui
+        self.ultimo_intervento = 0.0
         self.consigliato = False  # il consiglio di usare Python 3.12 si dà una volta sola
 
         self.root = tk.Tk()
@@ -248,7 +252,7 @@ class Finestra:
         self.stop.set()
         self.voce.zitto()
 
-    def _invia(self, testo=None, mostra=True, a_voce=False):
+    def _invia(self, testo=None, mostra=True, a_voce=False, spontaneo=False):
         if self.occupato:
             return
         if testo is None:
@@ -271,7 +275,7 @@ class Finestra:
             self._comando_voce(testo[6:].strip().lower())
             return
         if mostra:
-            self._messaggio("Tu (a voce)" if a_voce else "Tu", testo, "tu")
+            self._messaggio("Tu (ti ho sentito)" if spontaneo else "Tu (a voce)" if a_voce else "Tu", testo, "tu")
         self.etichetta_scritta = False
         self.domanda_a_voce = a_voce
         self.ultima_risposta = ""
@@ -280,7 +284,7 @@ class Finestra:
         if self.risposta_a_voce:
             self.voce.inizia()
         self._occupa(True)
-        threading.Thread(target=self._lavora, args=(testo, a_voce), daemon=True).start()
+        threading.Thread(target=self._lavora, args=(testo, a_voce, spontaneo), daemon=True).start()
 
     def _chiedi_chiave(self):
         chiave = simpledialog.askstring(
@@ -290,9 +294,9 @@ class Finestra:
             self._riga(self.assistente.imposta_chiave(chiave), "info")
             self.casella.configure(state="normal" if self.assistente.supporta_ragionamento else "disabled")
 
-    def _lavora(self, testo, a_voce):
+    def _lavora(self, testo, a_voce, spontaneo=False):
         try:
-            for evento in self.assistente.gestisci(testo, self.stop, a_voce=a_voce):
+            for evento in self.assistente.gestisci(testo, self.stop, a_voce=a_voce, spontaneo=spontaneo):
                 self.eventi.put(evento)
         except ErroreOllama as e:
             self.eventi.put(("errore", str(e)))
@@ -375,7 +379,39 @@ class Finestra:
     def _nuovo_orecchio(self):
         return ascolto.Ascolto(self.config, al_comando=lambda testo: self.eventi.put(("comando_vocale", testo)),
                                al_stato=lambda testo: self.eventi.put(("stato_ascolto", testo)),
+                               al_senza_nome=lambda testo, secondi: self.eventi.put(("senza_nome", testo, secondi)),
                                parlando=lambda: self.voce.sta_parlando)
+
+    def _senza_nome(self, testo, secondi):
+        """Una frase sentita senza "Jarvis": il cervello veloce decide se era per lui o se all'utente serve aiuto."""
+        attenzione = self.config["attenzione"]
+        in_gioco = self.assistente.modalita_gioco and not self.config["attenzione_in_gioco"]
+        if attenzione == "solo_nome" or in_gioco or self.occupato or self.valutando or not testo:
+            return
+        self.valutando = True
+
+        def valuta():
+            try:
+                decisione = self.assistente.valuta_frase(testo, secondi)
+            except ErroreOllama:
+                decisione = "ignora"
+            self.eventi.put(("decisione", testo, decisione))
+
+        threading.Thread(target=valuta, daemon=True).start()
+
+    def _decisione(self, testo, decisione):
+        self.valutando = False
+        if self.occupato or decisione == "ignora" or testo.lower().strip(" .!") == "esci":
+            return
+        if decisione == "rivolta":
+            self._invia(testo, a_voce=True)
+            return
+        # Un bisogno: interviene di sua iniziativa, ma senza diventare invadente.
+        adesso = time.monotonic()
+        if self.config["attenzione"] != "alta" and adesso - self.ultimo_intervento < PAUSA_TRA_INTERVENTI:
+            return
+        self.ultimo_intervento = adesso
+        self._invia(testo, a_voce=True, spontaneo=True)
 
     def _avvia_orecchio(self):
         if self.orecchio.errore:  # l'ultima volta non è partito: ci riprova da capo
@@ -520,6 +556,10 @@ class Finestra:
             self._avvia_orecchio()
         elif tipo == "comando_vocale":
             self._comando_vocale(evento[1])
+        elif tipo == "senza_nome":
+            self._senza_nome(evento[1], evento[2])
+        elif tipo == "decisione":
+            self._decisione(evento[1], evento[2])
         elif tipo == "stato_ascolto":
             testo = evento[1]
             if testo.startswith("ascolto non disponibile"):
@@ -528,8 +568,10 @@ class Finestra:
                 testo = ""
             elif testo == "in ascolto" and not self.assistente.voce_attiva:
                 self.assistente.voce_attiva = True
+                senza_nome = ("" if self.config["attenzione"] == "solo_nome" else
+                              " Puoi anche parlarmi senza nome: capisco da solo quando ti rivolgi a me.")
                 self._riga(f"Ti ascolto: chiamami dicendo \"{self.nome}\" (per esempio \"{self.nome}, che ore "
-                           f"sono?\"). Per interrompermi: \"{self.nome}, basta\".", "info")
+                           f"sono?\").{senza_nome} Per interrompermi: \"{self.nome}, basta\".", "info")
             self.stato_ascolto = testo
             self._aggiorna_stato()
         elif tipo == "stato_voce":

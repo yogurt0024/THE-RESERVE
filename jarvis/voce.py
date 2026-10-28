@@ -7,17 +7,29 @@ funziona lo stesso, solo senza parlare.
 
 import asyncio
 import io
+import json
+import os
 import queue
 import re
 import threading
+import unicodedata
+import wave
+from pathlib import Path
 
 import scarica
+import tokenizzatore
 
 _PIPER = "rhasspy/piper-voices"
 _KOKORO = "https://github.com/thewh1teagle/kokoro-onnx/releases/download"
+_CHATTERBOX = "onnx-community/chatterbox-multilingual-ONNX"
 
 VOCE_PREDEFINITA = "riccardo"
 VOCI = {
+    "espressiva": {
+        "motore": "chatterbox", "cartella": "voce-espressiva",
+        "descrizione": "Espressiva: recita con emozione, con il timbro di Nicola (Chatterbox, sul PC; scarica "
+                       "circa 1,5 GB e ha bisogno di un processore veloce)",
+    },
     "riccardo": {
         "motore": "piper", "cartella": "voce-riccardo",
         "descrizione": "Riccardo: sul PC, privata e veloce, un po' metallica",
@@ -44,7 +56,7 @@ VOCI = {
         "descrizione": "Giuseppe: voce di Microsoft, molto naturale, ma il testo passa da internet",
     },
 }
-PACCHETTI = {"piper": "piper-tts", "kokoro": "kokoro-onnx", "edge": "edge-tts soundfile"}
+PACCHETTI = {"piper": "piper-tts", "kokoro": "kokoro-onnx", "edge": "edge-tts soundfile", "chatterbox": "onnxruntime"}
 
 # Dove finisce una frase: dopo . ! ? … ; : seguiti da uno spazio, oppure a capo.
 _FINE_FRASE = re.compile(r"(?<=[.!?…;:])\s+|\n+")
@@ -111,16 +123,19 @@ def effetto_jarvis(audio, frequenza, intensita=0.6):
     return uscita * (0.89 / picco) if picco > 0 else uscita
 
 
-def carica_motore(nome, velocita=1.0, avanzamento=None):
+def carica_motore(nome, velocita=1.0, avanzamento=None, config=None):
     """Prepara una voce di VOCI: la scarica la prima volta, poi la carica. Può richiedere qualche secondo."""
     info = VOCI.get(nome)
     if info is None:
         raise ErroreVoce(f'non conosco la voce "{nome}": quelle disponibili sono {", ".join(VOCI)}')
     cartella = scarica.CARTELLA_MODELLI / info.get("cartella", nome)
+    motore = _MOTORI[info["motore"]]
     try:
         for file, indirizzi in info.get("file", {}).items():
             scarica.scarica(indirizzi, cartella / file, avanzamento)
-        return _MOTORI[info["motore"]](cartella, info, velocita)
+        if hasattr(motore, "scarica_file"):
+            motore.scarica_file(cartella, avanzamento)
+        return motore(cartella, info, velocita, config or {})
     except scarica.ErroreDownload as e:
         raise ErroreVoce(str(e)) from None
     except ImportError as e:
@@ -141,7 +156,7 @@ def spiega_errore_di_libreria(errore, pacchetto):
 
 
 class _Piper:
-    def __init__(self, cartella, info, velocita):
+    def __init__(self, cartella, info, velocita, config):
         from piper import PiperVoice, SynthesisConfig
 
         self._voce = PiperVoice.load(str(cartella / "voce.onnx"))
@@ -158,7 +173,7 @@ class _Piper:
 
 
 class _Kokoro:
-    def __init__(self, cartella, info, velocita):
+    def __init__(self, cartella, info, velocita, config):
         from kokoro_onnx import Kokoro
 
         self._kokoro = Kokoro(str(cartella / "kokoro.onnx"), str(cartella / "voci.bin"))
@@ -170,7 +185,7 @@ class _Kokoro:
 
 
 class _Edge:
-    def __init__(self, cartella, info, velocita):
+    def __init__(self, cartella, info, velocita, config):
         import edge_tts  # noqa: F401  (controlla subito che le librerie ci siano)
         import soundfile  # noqa: F401
 
@@ -195,7 +210,204 @@ class _Edge:
         return soundfile.read(io.BytesIO(mp3), dtype="float32")
 
 
-_MOTORI = {"piper": _Piper, "kokoro": _Kokoro, "edge": _Edge}
+INIZIO_PARLATO, FINE_PARLATO = 6561, 6562  # i "segnali" di inizio e fine della voce nel modello di Chatterbox
+FREQUENZA_CHATTERBOX = 24000
+TESTO_DI_RIFERIMENTO = ("Buongiorno. Ho controllato tutti i sistemi e funziona ogni cosa a dovere. Oggi il cielo è "
+                        "sereno, la temperatura è piacevole, e sono pronto ad aiutarla con qualunque cosa le serva.")
+# Il modello linguistico di Chatterbox, dal più adatto al processore al più pesante.
+_MODELLI_LINGUISTICI = ["language_model_q4.onnx", "language_model_q4f16.onnx", "language_model_quantized.onnx",
+                        "language_model.onnx"]
+
+
+class _Chatterbox:
+    """Chatterbox (Resemble AI): un modello che recita, con un controllo dell'emozione da 0 a 1.
+
+    Funziona con onnxruntime, come l'ascolto: niente PyTorch. Imita il timbro di una voce di riferimento,
+    che di solito Jarvis registra da solo con la voce di Nicola (o di Riccardo, se Nicola non c'è).
+    """
+
+    @staticmethod
+    def scarica_file(cartella, avanzamento):
+        if (cartella / ".completo").exists():
+            return
+        schemi = ["tokenizer.json", "default_voice.wav", "onnx/speech_encoder.onnx*", "onnx/embed_tokens.onnx*",
+                  "onnx/conditional_decoder.onnx*", "onnx/language_model*.onnx*"]
+        tutti = scarica.file_su_huggingface(_CHATTERBOX, schemi)
+        modello = next(f"onnx/{m}" for m in _MODELLI_LINGUISTICI if f"onnx/{m}" in tutti)
+        for file in tutti:
+            if not file.startswith("onnx/language_model") or file.startswith(modello):
+                scarica.scarica(scarica.da_huggingface(_CHATTERBOX, file), cartella / file, avanzamento)
+        (cartella / ".completo").write_text(modello + "\n", encoding="utf-8")
+
+    def __init__(self, cartella, info, velocita, config):
+        import numpy as np
+        import onnxruntime
+
+        self._np = np
+        self.emozione = float(config.get("emozione_voce", 0.6))
+        self.lingua = "it"
+        opzioni = onnxruntime.SessionOptions()
+        opzioni.intra_op_num_threads = max(1, (os.cpu_count() or 2) - 2)  # lascia un po' di respiro al PC
+
+        def sessione(file):
+            return onnxruntime.InferenceSession(str(cartella / "onnx" / file), opzioni,
+                                                providers=["CPUExecutionProvider"])
+
+        modello = (cartella / ".completo").read_text(encoding="utf-8").strip().removeprefix("onnx/")
+        self._codificatore = sessione("speech_encoder.onnx")
+        self._incorpora = sessione("embed_tokens.onnx")
+        self._lingua = sessione(modello)
+        self._decodificatore = sessione("conditional_decoder.onnx")
+        self._ingressi_incorpora = {i.name for i in self._incorpora.get_inputs()}
+        self._ingressi_lingua = {i.name for i in self._lingua.get_inputs()}
+        self._uscite_lingua = [u.name for u in self._lingua.get_outputs()]
+        # La memoria del modello parte vuota: (1, teste, 0, dimensione), in float16 se il modello la vuole così.
+        predefinite = (1, 16, 0, 64)
+        self._cache_vuota = {
+            i.name: np.zeros([d if isinstance(d, int) and n != 2 else predefinite[n] for n, d in enumerate(i.shape)],
+                             dtype=np.float16 if "float16" in i.type else np.float32)
+            for i in self._lingua.get_inputs() if i.name.startswith("past_key_values")}
+
+        dati = json.loads((cartella / "tokenizer.json").read_text(encoding="utf-8"))
+        vocabolario = set(dati["model"].get("vocab", {})) | {t["content"] for t in dati.get("added_tokens", [])}
+        if f"[{self.lingua}]" not in vocabolario:
+            raise ErroreVoce("questo modello di Chatterbox non conosce l'italiano")
+        # Il modello è stato addestrato con gli spazi scritti come [SPACE]: se il file non lo fa da solo, lo si fa qui.
+        self._spazio = "[SPACE]" in vocabolario and " " not in vocabolario
+        self._codifica = tokenizzatore.carica(cartella / "tokenizer.json")
+
+        riferimento = self._riferimento(cartella, config)
+        audio = leggi_wav(riferimento, FREQUENZA_CHATTERBOX)[:FREQUENZA_CHATTERBOX * 10]  # bastano 10 secondi
+        uscite = self._codificatore.run(None, {"audio_values": audio[None, :].astype(np.float32)})
+        nomi = [u.name for u in self._codificatore.get_outputs()]
+        per_nome = dict(zip(nomi, uscite))
+        self._condizionamento, self._token_di_riferimento, self._timbro, self._caratteristiche = (
+            per_nome.get(nome, uscite[i]) for i, nome in
+            enumerate(["audio_features", "audio_tokens", "speaker_embeddings", "speaker_features"]))
+        self.sintetizza("Pronto.")
+
+    @staticmethod
+    def _riferimento(cartella, config):
+        scelto = (config.get("voce_riferimento") or "").strip()
+        if scelto:
+            if not Path(scelto).is_file():
+                raise ErroreVoce(f"non trovo la voce di riferimento {scelto} (controlla config.json)")
+            return Path(scelto)
+        mio = cartella / "riferimento.wav"
+        if mio.exists():
+            return mio
+        for nome in ("nicola", "riccardo"):  # una voce sintetica, che si può imitare senza chiedere il permesso a nessuno
+            try:
+                audio, frequenza = carica_motore(nome).sintetizza(TESTO_DI_RIFERIMENTO)
+            except ErroreVoce:
+                continue
+            salva_wav(mio, effetto_jarvis(audio, frequenza, 0), frequenza)
+            return mio
+        return cartella / "default_voice.wav"
+
+    def _numeri(self, testo):
+        testo = unicodedata.normalize("NFKD", _punteggiatura_per_chatterbox(testo).lower())
+        testo = f"[{self.lingua}]{testo}"
+        if self._spazio:
+            testo = testo.replace(" ", "[SPACE]")
+        return self._codifica(testo)
+
+    def sintetizza(self, testo):
+        np = self._np
+        ids = np.array([self._numeri(testo)], dtype=np.int64)
+        posizioni = np.where(ids >= INIZIO_PARLATO, 0, np.arange(ids.shape[1])[None, :] - 1).astype(np.int64)
+        incorporati = np.concatenate([self._condizionamento, self._incorpora_token(ids, posizioni)], axis=1)
+        maschera = np.ones((1, incorporati.shape[1]), dtype=np.int64)
+        passato = dict(self._cache_vuota)
+        generati = [INIZIO_PARLATO]
+        lunghezza = 0
+        # Circa 25 "pezzi di voce" al secondo: il limite evita che una frase difficile vada avanti all'infinito.
+        for passo in range(min(1000, 75 + 3 * len(testo))):
+            ingressi = {"inputs_embeds": incorporati, "attention_mask": maschera, **passato}
+            if "position_ids" in self._ingressi_lingua:
+                ingressi["position_ids"] = np.arange(lunghezza, lunghezza + incorporati.shape[1])[None, :]
+            lunghezza += incorporati.shape[1]
+            uscite = dict(zip(self._uscite_lingua, self._lingua.run(None, ingressi)))
+            logit = uscite.get("logits", uscite[self._uscite_lingua[0]])[0, -1, :].astype(np.float32)
+            prossimo = int(np.argmax(_penalita(logit, generati, 1.2)))
+            if prossimo == FINE_PARLATO:
+                break
+            generati.append(prossimo)
+            passato = {nome.replace("present", "past_key_values", 1): valore for nome, valore in uscite.items()
+                       if nome.startswith("present")}
+            incorporati = self._incorpora_token(np.array([[prossimo]], dtype=np.int64),
+                                                np.array([[passo + 1]], dtype=np.int64))
+            maschera = np.concatenate([maschera, np.ones((1, 1), dtype=np.int64)], axis=1)
+        parlato = [t for t in generati[1:] if t < INIZIO_PARLATO]
+        token = np.concatenate([self._token_di_riferimento, np.array([parlato], dtype=np.int64)], axis=1)
+        onda = self._decodificatore.run(None, {"speech_tokens": token, "speaker_embeddings": self._timbro,
+                                               "speaker_features": self._caratteristiche})[0]
+        return np.squeeze(onda).astype(np.float32), FREQUENZA_CHATTERBOX
+
+    def _incorpora_token(self, ids, posizioni):
+        ingressi = {"input_ids": ids, "position_ids": posizioni}
+        if "exaggeration" in self._ingressi_incorpora:
+            ingressi["exaggeration"] = self._np.array([self.emozione], dtype=self._np.float32)
+        return self._incorpora.run(None, ingressi)[0]
+
+
+def _penalita(logit, generati, penalita):
+    """Rende meno probabili i pezzi di voce già usati, così il modello non si incanta su un suono."""
+    usati = list(set(generati))
+    valori = logit[usati]
+    logit = logit.copy()
+    logit[usati] = [v * penalita if v < 0 else v / penalita for v in valori]
+    return logit
+
+
+def _punteggiatura_per_chatterbox(testo):
+    """Come la prepara Chatterbox: maiuscola iniziale, punteggiatura semplice, un punto alla fine."""
+    testo = " ".join(testo.split())
+    if not testo:
+        return testo
+    testo = testo[0].upper() + testo[1:]
+    for vecchio, nuovo in [("...", ", "), ("…", ", "), (":", ","), (" - ", ", "), (";", ", "), ("—", "-"),
+                           ("–", "-"), (" ,", ","), ("“", '"'), ("”", '"'), ("‘", "'"), ("’", "'")]:
+        testo = testo.replace(vecchio, nuovo)
+    testo = testo.rstrip()
+    return testo if testo[-1:] in ".!?-," else testo + "."
+
+
+def leggi_wav(percorso, frequenza):
+    """Legge un file WAV (PCM) come numeri tra -1 e 1, in mono e alla frequenza voluta."""
+    import numpy as np
+
+    try:
+        with wave.open(str(percorso), "rb") as w:
+            canali, larghezza, originale = w.getnchannels(), w.getsampwidth(), w.getframerate()
+            dati = w.readframes(w.getnframes())
+    except (OSError, wave.Error, EOFError) as e:
+        raise ErroreVoce(f"non riesco a leggere {percorso}: serve un file WAV ({e})") from None
+    tipi = {1: (np.uint8, 128, 128), 2: (np.int16, 0, 32768), 4: (np.int32, 0, 2 ** 31)}
+    if larghezza not in tipi:
+        raise ErroreVoce(f"{percorso}: formato WAV non supportato (usa un WAV a 16 bit)")
+    tipo, zero, scala = tipi[larghezza]
+    audio = (np.frombuffer(dati, dtype=tipo).astype(np.float32) - zero) / scala
+    audio = audio.reshape(-1, canali).mean(axis=1)
+    if originale != frequenza and len(audio):
+        lunghezza = round(len(audio) * frequenza / originale)
+        audio = np.interp(np.linspace(0, len(audio) - 1, lunghezza), np.arange(len(audio)), audio)
+    return audio.astype(np.float32)
+
+
+def salva_wav(percorso, audio, frequenza):
+    import numpy as np
+
+    Path(percorso).parent.mkdir(parents=True, exist_ok=True)
+    dati = (np.clip(audio, -1, 1) * 32767).astype("<i2").tobytes()
+    with wave.open(str(percorso), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(int(frequenza))
+        w.writeframes(dati)
+
+
+_MOTORI = {"piper": _Piper, "kokoro": _Kokoro, "edge": _Edge, "chatterbox": _Chatterbox}
 
 
 def _riproduci_con_sounddevice(audio, frequenza, interrompi):
@@ -259,7 +471,8 @@ class Voce:
             if not riprova and self._fallita == nome:
                 return self.errore
             try:
-                self._motore = carica_motore(nome, float(self.config.get("velocita_voce", 1.0)), avanzamento)
+                self._motore = carica_motore(nome, float(self.config.get("velocita_voce", 1.0)), avanzamento,
+                                             self.config)
                 self._nome_motore, self._fallita, self.errore = nome, None, ""
             except ErroreVoce as e:
                 self._motore, self._fallita, self.errore = None, nome, str(e)

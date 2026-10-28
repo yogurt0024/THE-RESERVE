@@ -49,6 +49,11 @@ class FintoOllama(BaseHTTPRequestHandler):
             return self._json({"capabilities": self.CAPACITA[modello]})
         if not dati["messages"]:
             return self._json({"done": True})
+        if "format" in dati:  # il modulo di attenzione: decide se una frase senza nome era per Jarvis
+            frase = dati["messages"][-1]["content"].rpartition("Frase appena sentita:")[2].lower()
+            decisione = "ignora" if "arrivo" in frase else "bisogno" if "quanto fa" in frase else "rivolta"
+            return self._json({"message": {"role": "assistant", "content": json.dumps({"decisione": decisione})},
+                               "done": True})
         ultimo = dati["messages"][-1]
         strumenti = [s["function"]["name"] for s in dati.get("tools", [])]
         parti = []
