@@ -91,7 +91,7 @@ class TestVoce(unittest.TestCase):
         v.finisci()
         self.aspetta(v)
         self.assertEqual(self.frasi, ["Buongiorno, signore.", "Oggi a Cagliari ci sono 22 gradi.",
-                                      "Il resto lo trova nella finestra, signore."])
+                                      "Il resto lo trova sullo schermo, signore."])
         self.assertEqual(self.cambi[0], True)
         self.assertEqual(self.cambi[-1], False)
 

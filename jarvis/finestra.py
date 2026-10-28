@@ -631,8 +631,12 @@ class Finestra:
         elif tipo == "stato_voce":
             self.stato_voce = evento[1]
             self._aggiorna_stato()
-        elif tipo == "problema_voce":
-            self._info(evento[1] + self._consiglio_python())
+        elif tipo == "problema_voce":  # resta sullo schermo finché non lo chiudi, e nella cronologia
+            riserva = self.config.get("voce_di_riserva", "")
+            intanto = (f"\n\nIntanto parlo con la voce di riserva ({riserva})." if riserva and
+                       riserva != self.config["voce"] else "")
+            self._registra("avviso", evento[1])
+            self.hud.scheda("Problema con la voce", evento[1] + intanto + self._consiglio_python())
         elif tipo == "parlando":
             self.parlando = evento[1]
             self._aggiorna_stato()

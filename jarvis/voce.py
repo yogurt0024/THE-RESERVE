@@ -578,7 +578,7 @@ class Voce:
     def _frase_del_resto(self):
         titolo = self.config.get("come_chiamarmi", "")
         t = f", {titolo}" if titolo else ""
-        return f"Il resto lo {'trovi' if self.config.get('dai_del') == 'tu' else 'trova'} nella finestra{t}."
+        return f"Il resto lo {'trovi' if self.config.get('dai_del') == 'tu' else 'trova'} sullo schermo{t}."
 
     def _metti_in_fila(self, frase):
         testo = per_la_voce(frase)
