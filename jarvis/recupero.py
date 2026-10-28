@@ -1,14 +1,17 @@
-"""Ritrova la voce di ElevenLabs scelta in un'altra copia di Jarvis sul PC.
+"""Quando si scarica Jarvis di nuovo (uno ZIP nuovo in Download, una cartella sul Desktop...), riprende i tuoi
+dati e la tua voce dalla copia di Jarvis usata prima.
 
-Capita quando si scarica Jarvis più volte (uno ZIP nuovo in Download, una cartella sul Desktop...): la voce
-scelta con prova_voci.py resta in config.json e in dati/ della copia dove è stata scelta. All'avvio, se in
-questa copia la voce di ElevenLabs non è impostata, Jarvis la cerca:
-1. nelle altre copie di Jarvis sul PC (accanto a questa, in Download, sul Desktop, in Documenti);
-2. nella cronologia del tuo account ElevenLabs, se in questa copia c'è la chiave.
-Legge solo le cartelle di Jarvis; copia qui la chiave di ElevenLabs e i ricordi solo se qui mancano.
+- trasloca(): la prima volta che si apre una copia nuova, senza dati, porta qui la cartella dati (memoria,
+  conversazioni, promemoria, diario, chiavi, abilità, modelli) e le impostazioni di config.json della copia più
+  recente che trova sul PC.
+- ritrova_voce(): se in questa copia la voce di ElevenLabs non è impostata (o manca la sua chiave), la cerca nelle
+  altre copie e, se serve, nella cronologia del tuo account ElevenLabs.
+Le altre copie si cercano accanto a questa, in Download, sul Desktop e in Documenti; si leggono solo le cartelle
+di Jarvis, e qui si copia solo quello che manca.
 """
 
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -20,6 +23,12 @@ CARTELLA = Path(__file__).resolve().parent
 VOCI_PREDEFINITE = ("", "riccardo", "elevenlabs")
 DATI_DA_RECUPERARE = ("chiave_elevenlabs.txt", "memoria.json", "promemoria.json", "conversazione.json")
 IMPOSTAZIONI_VOCE = ("voce", "voce_elevenlabs", "modello_elevenlabs", "effetto_voce", "velocita_voce")
+# Se c'è uno di questi file, la copia è già stata usata: non è una copia nuova da riempire.
+FILE_PERSONALI = ("memoria.json", "conversazione.json", "promemoria.json", "chiave_elevenlabs.txt",
+                  "chiave_claude.txt", "chiave_github.txt", "versione.txt")
+NON_DA_PORTARE = ("versione.txt",)  # la versione è quella della copia nuova
+CARTELLE_NON_DA_PORTARE = ("voci_di_prova",)
+ultimo_trasloco = ""  # il messaggio dell'ultimo trasloco, che la finestra mostra quando è pronta
 
 
 def _leggi_config(file):
@@ -61,15 +70,63 @@ def altre_copie(cartella=CARTELLA, radici=None):
     return [(copia, config) for _, copia, config in trovate]
 
 
+def trasloca(cartella=CARTELLA, radici=None):
+    """La prima volta di una copia nuova: porta qui dati e impostazioni della copia usata prima.
+    Va chiamata prima di leggere config.json e i dati. Restituisce un messaggio, oppure "" se non serviva."""
+    global ultimo_trasloco
+    dati = cartella / "dati"
+    if any((dati / nome).exists() for nome in FILE_PERSONALI):
+        return ""
+    candidate = []
+    for copia, config in altre_copie(cartella, radici):
+        personali = [copia / "dati" / nome for nome in FILE_PERSONALI if (copia / "dati" / nome).is_file()]
+        if personali:
+            candidate.append((max(f.stat().st_mtime for f in personali), copia, config))
+    if not candidate:
+        return ""
+    _, copia, vecchia = max(candidate, key=lambda c: c[0])
+    origine_dati = copia / "dati"
+    for origine in sorted(origine_dati.rglob("*")):
+        relativo = origine.relative_to(origine_dati)
+        destinazione = dati / relativo
+        if (not origine.is_file() or destinazione.exists() or origine.name.endswith(".parziale")
+                or relativo.parts[0] in CARTELLE_NON_DA_PORTARE or str(relativo) in NON_DA_PORTARE):
+            continue
+        destinazione.parent.mkdir(parents=True, exist_ok=True)
+        if relativo.parts[0] == "modelli":
+            try:  # i modelli sono grandi: sullo stesso disco basta un collegamento, che non occupa altro spazio
+                os.link(origine, destinazione)
+            except OSError:
+                pass  # su un altro disco non si copiano: Jarvis li riscarica da solo
+            continue
+        shutil.copy2(origine, destinazione)
+    file_config = cartella / "config.json"
+    attuale = _leggi_config(file_config) or {}
+    unita = dict(attuale)
+    unita.update({chiave: valore for chiave, valore in vecchia.items() if chiave in attuale})
+    if unita != attuale:
+        file_config.write_text(json.dumps(unita, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    ultimo_trasloco = (f"Ho ripreso i tuoi dati e le tue impostazioni dalla copia di Jarvis in {copia}: memoria, "
+                       "promemoria, diario, chiavi e voce sono come prima.")
+    return ultimo_trasloco
+
+
 def ritrova_voce(config, salva, cartella=CARTELLA, radici=None, forza=False):
     """Se qui la voce di ElevenLabs non è impostata, la ritrova e la rimette. `salva(chiave, valore)` scrive in
     config.json. Con `forza` la cerca anche se è scelta un'altra voce (per esempio con /voce elevenlabs).
     Restituisce un messaggio per l'utente, oppure "" se non c'era niente da fare o da trovare."""
+    dati = cartella / "dati"
     if (config.get("voce_elevenlabs") or "").strip():
-        return ""  # la voce di ElevenLabs è già impostata: chi parla con un'altra voce l'ha scelto
+        # La voce di ElevenLabs è già impostata: chi parla con un'altra voce l'ha scelto. Se però manca la chiave
+        # (per esempio si è copiato config.json ma non la cartella dati), la si riprende da un'altra copia.
+        if config.get("voce") == "elevenlabs" and not (dati / "chiave_elevenlabs.txt").exists():
+            for copia, _ in altre_copie(cartella, radici):
+                if (copia / "dati" / "chiave_elevenlabs.txt").is_file():
+                    _recupera_dati(copia, dati)
+                    return f"Ho ripreso la chiave di ElevenLabs dalla copia di Jarvis in {copia}."
+        return ""
     if not forza and config.get("voce", "") not in VOCI_PREDEFINITE:
         return ""
-    dati = cartella / "dati"
     copie = altre_copie(cartella, radici)
     for copia, altra in copie:
         if altra.get("voce") != "elevenlabs" or not (altra.get("voce_elevenlabs") or "").strip():

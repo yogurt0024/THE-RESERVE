@@ -642,6 +642,8 @@ class Finestra:
             self._comando_rimasto()
         elif tipo == "pronto":
             self.pronto = True
+            if recupero.ultimo_trasloco:
+                self._info(recupero.ultimo_trasloco)
             for messaggio in self.assistente.cronologia:
                 testo = messaggio["content"].split(SEPARATORE_DATI)[0]
                 self._registra("tu" if messaggio["role"] == "user" else "jarvis", testo)
@@ -777,6 +779,10 @@ def avvia():
             ctypes.windll.shcore.SetProcessDpiAwareness(1)  # testo nitido sugli schermi ad alta risoluzione
         except (AttributeError, OSError):
             pass
+    try:  # una copia appena scaricata riprende dati e impostazioni da quella di prima (vedi recupero.py)
+        recupero.trasloca()
+    except Exception:  # se non ci riesce si parte lo stesso, come una copia nuova
+        pass
     try:
         config = carica_config()
     except SystemExit as e:

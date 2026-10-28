@@ -111,6 +111,60 @@ class TestRecupero(unittest.TestCase):
         self.assertTrue(self.ritrova().startswith("Ho ritrovato su ElevenLabs la voce"))
         self.assertEqual(self.config["voce_elevenlabs"], "giorgio")
 
+    def test_copia_nuova_riprende_tutto_da_quella_di_prima(self):
+        vecchia = copia_di_jarvis(
+            self.download / "vecchia" / "jarvis",
+            {"voce": "elevenlabs", "voce_elevenlabs": "giorgio", "effetto_voce": 0.0, "citta": "Cagliari",
+             "impostazione_sparita": True},
+            {"chiave_elevenlabs.txt": "chiave-gratis\n", "memoria.json": '{"fatti": ["Gioco a Minecraft"]}',
+             "versione.txt": "vecchia\n", "conversazione.json": "{}"})
+        (vecchia / "dati" / "diario").mkdir()
+        (vecchia / "dati" / "diario" / "2026-10-28.md").write_text("Abbiamo scelto la voce.", encoding="utf-8")
+        (vecchia / "dati" / "modelli" / "parakeet").mkdir(parents=True)
+        (vecchia / "dati" / "modelli" / "parakeet" / "modello.onnx").write_bytes(b"pesante")
+        (vecchia / "dati" / "modelli" / "parakeet" / "altro.onnx.parziale").write_bytes(b"a meta")
+        (vecchia / "dati" / "voci_di_prova").mkdir()
+        (vecchia / "dati" / "voci_di_prova" / "1.wav").write_bytes(b"prova")
+        # Una copia ancora più vecchia, usata prima: non è quella da riprendere.
+        piu_vecchia = copia_di_jarvis(self.download / "antica" / "jarvis", {"voce": "riccardo"},
+                                      {"memoria.json": '{"fatti": ["antico"]}'})
+        os.utime(piu_vecchia / "dati" / "memoria.json", (1, 1))
+        (self.qui / "config.json").write_text(json.dumps({"voce": "riccardo", "voce_elevenlabs": "", "citta": "",
+                                                          "effetto_voce": 0.6, "nuova_impostazione": 1}),
+                                              encoding="utf-8")
+        messaggio = recupero.trasloca(self.qui, radici=[self.download])
+        self.assertEqual(messaggio, f"Ho ripreso i tuoi dati e le tue impostazioni dalla copia di Jarvis in "
+                                    f"{vecchia.resolve()}: memoria, promemoria, diario, chiavi e voce sono come prima.")
+        dati = self.qui / "dati"
+        self.assertIn("Minecraft", (dati / "memoria.json").read_text(encoding="utf-8"))
+        self.assertEqual(el.leggi_chiave(), "chiave-gratis")
+        self.assertEqual((dati / "diario" / "2026-10-28.md").read_text(encoding="utf-8"), "Abbiamo scelto la voce.")
+        self.assertEqual((dati / "modelli" / "parakeet" / "modello.onnx").read_bytes(), b"pesante")
+        self.assertFalse((dati / "modelli" / "parakeet" / "altro.onnx.parziale").exists())
+        self.assertFalse((dati / "voci_di_prova").exists())
+        self.assertFalse((dati / "versione.txt").exists())  # la versione è quella nuova
+        config = json.loads((self.qui / "config.json").read_text(encoding="utf-8"))
+        self.assertEqual(config, {"voce": "elevenlabs", "voce_elevenlabs": "giorgio", "citta": "Cagliari",
+                                  "effetto_voce": 0.0, "nuova_impostazione": 1})
+        self.assertEqual(recupero.trasloca(self.qui, radici=[self.download]), "")  # una volta sola
+
+    def test_copia_gia_usata_non_si_tocca(self):
+        copia_di_jarvis(self.download / "vecchia" / "jarvis", {"voce": "elevenlabs", "voce_elevenlabs": "giorgio"},
+                        {"memoria.json": '{"fatti": ["vecchio"]}'})
+        (self.qui / "dati").mkdir()
+        (self.qui / "dati" / "conversazione.json").write_text("{}", encoding="utf-8")
+        self.assertEqual(recupero.trasloca(self.qui, radici=[self.download]), "")
+        self.assertFalse((self.qui / "dati" / "memoria.json").exists())
+
+    def test_voce_impostata_ma_senza_chiave(self):
+        # Si è copiato config.json ma non la cartella dati: la chiave si riprende dalla copia di prima.
+        copia_di_jarvis(self.download / "vecchia" / "jarvis", {"voce": "elevenlabs", "voce_elevenlabs": "giorgio"},
+                        {"chiave_elevenlabs.txt": "chiave-gratis\n"})
+        self.config.update(voce="elevenlabs", voce_elevenlabs="giorgio")
+        self.assertTrue(self.ritrova().startswith("Ho ripreso la chiave di ElevenLabs dalla copia di Jarvis in "))
+        self.assertEqual(el.leggi_chiave(), "chiave-gratis")
+        self.assertEqual(self.ritrova(), "")
+
     def test_niente_da_trovare(self):
         self.assertEqual(self.ritrova(), "")  # né altre copie, né chiave
         (self.qui / "dati").mkdir()

@@ -113,6 +113,12 @@ l'ultima versione da GitHub, sostituisce solo i file del programma e si riavvia 
 All'avvio ti avvisa quando c'è una versione nuova (`"controlla_aggiornamenti": false` per non controllare).
 Si può aggiornare anche senza aprirlo: `py -3.12 aggiorna.py`.
 
+**Se scarichi Jarvis di nuovo a mano** (un altro ZIP), non serve copiare niente: la prima volta che apri la copia
+nuova, Jarvis cerca quella usata prima (accanto, in Download, sul Desktop o in Documenti) e riprende da lì la
+cartella `dati` (memoria, conversazioni, promemoria, diario, chiavi, abilità) e le tue impostazioni di
+`config.json`. I modelli già scaricati li collega senza occupare altro spazio, se sono sullo stesso disco;
+altrimenti li riscarica da solo. Non cancellare la copia vecchia finché quella nuova non ti ha salutato.
+
 **Se il repository su GitHub è privato**, Jarvis ha bisogno di una chiave di GitHub che può solo leggerlo
 (una volta sola):
 1. Su github.com clicca la tua foto in alto a destra, poi **Settings**, poi in fondo a sinistra **Developer

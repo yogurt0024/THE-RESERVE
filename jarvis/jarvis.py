@@ -14,6 +14,7 @@ from pathlib import Path
 import aggiorna
 import iniziativa
 import notifiche
+import recupero
 import voce_elevenlabs
 from cervello import Assistente, ErroreOllama, carica_config
 
@@ -165,6 +166,12 @@ def main():
         else:
             finestra.avvia()
             return
+    try:  # una copia appena scaricata riprende dati e impostazioni da quella di prima (vedi recupero.py)
+        trasloco = recupero.trasloca()
+    except Exception:
+        trasloco = ""
+    if trasloco:
+        print(f"» {trasloco}\n")
     terminale(carica_config())
 
 
