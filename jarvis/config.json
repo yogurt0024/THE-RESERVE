@@ -39,6 +39,7 @@
   "telefono_ntfy": "",
   "server_ntfy": "https://ntfy.sh",
   "avvisi_al_telefono": true,
+  "abilita": true,
   "cervello": "locale",
   "modello_claude": "claude-opus-5-5",
   "sforzo_claude": "medium",

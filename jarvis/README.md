@@ -26,6 +26,8 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
   avvisi quando non sei al PC (vedi [Calendario, Spotify, Minecraft e telefono](#calendario-spotify-minecraft-e-telefono)).
 - **Prende l'iniziativa**: promemoria con data e ora, briefing del mattino, avvisi se il PC ha problemi,
   consigli di pausa e un saluto quando torni al PC (vedi [Jarvis prende l'iniziativa](#jarvis-prende-liniziativa)).
+- **Impara cose nuove**: "Jarvis, impara a convertire le valute" e si scrive da solo un'abilità nuova, la prova e
+  te la propone; la usa solo dopo che l'hai approvata (vedi [Jarvis impara](#jarvis-impara)).
 - **Ragionamento profondo**: per le domande difficili pensa prima di rispondere (più lento, più preciso).
 - **Sa cosa sa fare**: chiedigli "cosa sai fare?" o "quali sono i tuoi limiti?".
 - **Due cervelli sul tuo PC**: uno veloce per tutto il resto e uno grande per le domande difficili,
@@ -116,6 +118,10 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/spotify <cosa>`             | fa partire un brano, un album o una playlist su Spotify |
 | `/server [indirizzo]`         | se il server di Minecraft è acceso e chi sta giocando |
 | `/telefono`                   | collega il telefono (`/telefono prova`, `/telefono spegni`) |
+| `/impara <cosa>`              | impara un'abilità nuova (come "Jarvis, impara a ...") |
+| `/migliora <abilità> <come>`  | migliora un'abilità che ha imparato                 |
+| `/abilita [nome]`             | le abilità imparate (`/abilita togli <nome>`, `/abilita ripristina <nome>`) |
+| `/approva [nome]`             | attiva un'abilità nuova (`/rifiuta [nome]` la scarta) |
 | `/chiamami <appellativo>`     | come vuoi essere chiamato (`/chiamami` da solo: nessun appellativo) |
 | `/tu` oppure `/lei`           | se Jarvis ti dà del tu o del lei                    |
 | `/ricorda <cosa>`             | salva un'informazione nella memoria permanente      |
@@ -187,6 +193,7 @@ Apri `config.json` con il Blocco note:
 | `server_minecraft`      | l'indirizzo del server di Minecraft che usi di solito, per esempio `"26.12.34.56:25565"` |
 | `telefono_ntfy`         | il canale dell'app ntfy del telefono (lo scrive `/telefono`)     |
 | `avvisi_al_telefono`    | `false` per non mandare gli avvisi al telefono quando sei lontano dal PC |
+| `abilita`               | `false` per non fargli imparare né usare abilità nuove          |
 | `cervello`              | `"locale"`, `"ibrido"` o `"claude"` (vedi sotto)                |
 | `modello_claude`        | quale modello di Claude usare (predefinito `claude-opus-5-5`)   |
 | `sforzo_claude`         | quanto ragiona Claude: `low`, `medium`, `high` (più alto = più preciso e più caro) |
@@ -381,6 +388,26 @@ Si regolano in `config.json`: `briefing`, `ora_briefing`, `avvisi_pc`, `consigli
 Tutto resta sul PC, nella cartella `dati`: le foto dello schermo e della webcam non vengono salvate, e il diario
 è in `dati/diario` (`"diario": false` per non tenerlo).
 
+## Jarvis impara
+
+Quando gli chiedi una cosa che non sa fare, Jarvis può imparare: "Jarvis, impara a convertire le valute",
+"impara a dirmi quanti giorni mancano a una data", "impara a calcolare la media dei voti".
+
+1. Il cervello grande scrive un'**abilità**: un piccolo programma che fa quella cosa, con alcune prove.
+2. Jarvis lo controlla e lo prova in un **recinto**: un processo separato che non può leggere o scrivere file,
+   avviare programmi o usare il sistema, con un tempo e una memoria massimi. Su internet può solo leggere pagine e
+   servizi pubblici. Se le prove non passano, lo corregge da solo (fino a tre volte).
+3. Te lo **propone** e aspetta: "Jarvis, approva" (o `/approva`) per attivarlo, `/rifiuta` per scartarlo. Prima
+   della tua approvazione non lo usa mai.
+
+Poi lo usa da solo quando serve, come gli altri strumenti. Puoi migliorarlo ("Jarvis, migliora l'abilità
+converti_valuta: aggiungi le sterline"): la versione nuova va approvata anche lei, e quella vecchia resta da parte
+(`/abilita ripristina converti_valuta` la rimette). `/abilita` mostra cosa ha imparato e dov'è il codice, se vuoi
+leggerlo; `/abilita togli <nome>` ne toglie una. Le abilità sono in `dati/abilita` e restano con gli aggiornamenti.
+
+Funziona meglio con il cervello grande (o con Claude, se lo usi): con il solo modello veloce le abilità vengono
+più semplici e a volte non passano le prove.
+
 ## Compiti in background
 
 Jarvis può lavorare a una cosa mentre tu fai altro, anche mentre continui a parlargli:
@@ -470,6 +497,8 @@ Usano Ollama, Claude, internet, microfono e voce finti: non costano niente e non
   canale potrebbe leggerli: per questo è lungo e casuale, e va tenuto per te (`/telefono nuovo` ne crea un altro).
   Ci finiscono solo gli avvisi e quello che chiedi tu di mandare.
 - **Presenza dalla webcam**: le foto servono solo a vedere se c'è un volto, sul PC, e vengono buttate subito.
+- **Abilità imparate**: le scrive il modello che usi (sul PC o Claude) e girano nel recinto, sul PC. Se qualcuno
+  cambia il file di un'abilità dopo che l'hai approvata, Jarvis se ne accorge e non la usa più.
 
 ## Limiti
 

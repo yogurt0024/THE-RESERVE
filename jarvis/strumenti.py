@@ -23,6 +23,7 @@ import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
 from email.utils import parsedate_to_datetime
 
+import abilita
 import documenti
 import integrazioni
 import promemoria
@@ -521,12 +522,21 @@ def schemi(config):
                 {"indirizzo": _testo("Indirizzo del server, con la porta se non è 25565 (facoltativo: "
                                      "senza, quello salvato in config.json)")}, []),
     ]
+    if config.get("abilita", True):
+        elenco += abilita.schemi()
     if config.get("webcam", True):
         elenco.append(_schema("guarda_webcam",
                               "Scatta una foto con la webcam e risponde a una domanda su quello che si vede. Usalo "
                               "solo quando l'utente te lo chiede (\"guardami\", \"cosa ho in mano?\").",
                               {"domanda": _testo("Cosa vuoi sapere")}, ["domanda"]))
     return elenco
+
+
+def nomi_riservati():
+    """I nomi degli strumenti di Jarvis, che un'abilità imparata non può prendere."""
+    tutto = {"internet": True, "programmi": {}, "webcam": True, "calendario_ics": "x", "telefono_ntfy": "x",
+             "abilita": False}
+    return {s["function"]["name"] for s in schemi(tutto)} | {"chiedi_al_cervello_avanzato"}
 
 
 def valida(nome, argomenti, elenco):
@@ -550,6 +560,8 @@ def valida(nome, argomenti, elenco):
             return f"{campo} deve essere un testo"
         if regola["type"] == "number" and (isinstance(valore, bool) or not isinstance(valore, (int, float))):
             return f"{campo} deve essere un numero"
+        if regola["type"] == "boolean" and not isinstance(valore, bool):
+            return f"{campo} deve essere true o false"
         if "enum" in regola and valore not in regola["enum"]:
             return f"{campo} deve essere uno tra: {', '.join(regola['enum'])}"
     return None
@@ -589,6 +601,8 @@ def descrivi(nome, argomenti):
         "server_minecraft": "Controllo il server di Minecraft...",
         "manda_al_telefono": "Lo mando al telefono...",
     }
+    if nome not in frasi and nome in abilita.attive():
+        return f"Uso l'abilità {nome}..."
     return frasi.get(nome, f"Uso lo strumento {nome}...")
 
 
@@ -644,9 +658,11 @@ def esegui(nome, argomenti, config, avvisa):
         if nome == "manda_al_telefono":
             return integrazioni.al_telefono(config, argomenti.get("titolo") or config.get("nome", "Jarvis"),
                                             argomenti.get("messaggio") or "", attendi=True)
+        if config.get("abilita", True) and nome in abilita.attive():
+            return abilita.esegui(nome, argomenti, internet=config["internet"])
         raise ErroreStrumento(f"lo strumento {nome} non esiste.")
     except (ErroreStrumento, promemoria.ErrorePromemoria, rete.ErroreRete, documenti.ErroreDocumenti,
-            integrazioni.ErroreIntegrazione, ValueError) as e:
+            integrazioni.ErroreIntegrazione, abilita.ErroreAbilita, ValueError) as e:
         return f"Errore: {e}"
     except Exception as e:  # una risposta imprevista da un sito non deve far cadere Jarvis
         return f"Errore: qualcosa è andato storto ({e})."

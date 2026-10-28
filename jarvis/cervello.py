@@ -14,6 +14,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+import abilita
 import aggiorna
 import cervello_claude
 import integrazioni
@@ -65,6 +66,7 @@ CONFIG_PREDEFINITA = {
     "telefono_ntfy": "",
     "server_ntfy": "https://ntfy.sh",
     "avvisi_al_telefono": True,
+    "abilita": True,
     "emozione_voce": 0.6,
     "voce_riferimento": "",
     "voce_elevenlabs": "",
@@ -103,6 +105,10 @@ AIUTO = """Comandi:
 /spotify <brano, album o playlist> — lo fa partire su Spotify
 /server [indirizzo] — chi c'è sul server di Minecraft
 /telefono — collega il telefono per ricevere gli avvisi (/telefono prova, /telefono spegni)
+/impara <cosa> — Jarvis scrive e prova un'abilità nuova, poi te la propone (come "Jarvis, impara a ...")
+/migliora <abilità> <cosa cambiare> — Jarvis migliora un'abilità che ha imparato
+/abilita [nome] — le abilità imparate (/abilita togli <nome>, /abilita ripristina <nome>)
+/approva [nome] oppure /rifiuta [nome] — attiva o scarta un'abilità nuova
 /sistema — diagnostica del PC (memoria, disco, scheda video)
 /chiamami <appellativo> — come vuoi essere chiamato (vuoto: nessun appellativo)
 /tu oppure /lei — se Jarvis ti dà del tu o del lei
@@ -193,10 +199,12 @@ ISTRUZIONI_COMPITO = (
 class Compito:
     """Un lavoro che il cervello grande porta avanti in background mentre l'utente fa altro."""
 
-    def __init__(self, numero, descrizione, contesto):
+    def __init__(self, numero, descrizione, contesto, tipo="lavoro", abilita_da_migliorare=None):
         self.numero = numero
         self.descrizione = descrizione
         self.contesto = contesto  # gli ultimi messaggi della conversazione, per capire la richiesta
+        self.tipo = tipo  # "lavoro", oppure "abilita" quando deve imparare una cosa nuova
+        self.abilita_da_migliorare = abilita_da_migliorare
         self.stato = "in coda"  # poi "in corso", "completato", "annullato" o "errore"
         self.risultato = ""
         self.stop = threading.Event()
@@ -448,6 +456,10 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
         righe.append("- Per le domande difficili e i lavori lunghi passa il lavoro al cervello avanzato, un modello "
                      "molto più potente di te, con lo strumento chiedi_al_cervello_avanzato: spesso lavora in "
                      "background, e l'utente riceve un avviso quando ha finito.")
+    if config.get("abilita", True):
+        righe.append("- Puoi imparare abilità nuove: se l'utente ti chiede una cosa che i tuoi strumenti non sanno "
+                     "fare, proponigli di dirti \"impara a ...\". Scrivi tu il programma, lo provi e lo usi solo "
+                     "dopo che l'utente lo ha approvato.")
     if not config["internet"]:
         righe.append("- Non sei collegato a internet.")
     righe += [
@@ -527,6 +539,14 @@ class Assistente:
         self._briefing_frase = re.compile(
             inizio + r"(?:(?:(?:fammi|dammi) )?(?:il )?briefing(?: del mattino| di oggi)?|com'è la (?:mia )?giornata"
             r"(?: oggi)?|cosa (?:c'è|ho) (?:in programma )?oggi|qual è il programma di oggi)[\s?.!]*$",
+            re.IGNORECASE)
+        self._impara_frase = re.compile(
+            inizio + r"(?:impara|imparati|devi imparare|voglio che (?:tu )?impari|puoi imparare) a (.+?)[\s.!]*$",
+            re.IGNORECASE)
+        self._migliora_frase = re.compile(inizio + r"migliora l'abilit[àa] ([a-z0-9_]+)[,:.]?\s*(.*?)[\s.!]*$",
+                                          re.IGNORECASE)
+        self._approva_frase = re.compile(
+            inizio + r"approva(?: (?:pure|la|l'abilit[àa]|la nuova abilit[àa]))*(?: ([a-z0-9_]+))?[\s.!]*$",
             re.IGNORECASE)
         self.acceso_da = time.monotonic()
         self.voce_attiva = False  # la finestra lo mette a True quando Jarvis può sentire e parlare
@@ -747,6 +767,19 @@ class Assistente:
         if self._aggiorna_frase.match(testo):
             yield from self._aggiorna(testo)
             return
+        if self.config.get("abilita", True) and not testo.endswith("?"):
+            migliora = self._migliora_frase.match(testo)
+            impara = self._impara_frase.match(testo)
+            approva = self._approva_frase.match(testo)
+            if migliora or impara or approva:
+                if approva:
+                    risposta = self._approva(approva.group(1) or "")
+                elif migliora:
+                    risposta = self._impara(migliora.group(2) or "rendila più utile e precisa", migliora.group(1))
+                else:
+                    risposta = self._impara(impara.group(1))
+                yield from self._risposta_fissa(testo, risposta)
+                return
         if self._briefing_frase.match(testo):
             domanda = yield from self._briefing()
             yield from self._chiedi(domanda, stop, con_strumenti=False, a_voce=a_voce)
@@ -1041,6 +1074,19 @@ class Assistente:
                 yield ("info", self.imposta_modalita_gioco(not self.modalita_gioco))
             elif nome == "telefono":
                 yield ("info", self._telefono(argomento))
+            elif nome == "impara":
+                yield ("info", self._impara(argomento) if argomento else
+                       "Scrivi cosa devo imparare, per esempio: /impara a convertire le valute")
+            elif nome == "migliora":
+                quale, _, come = argomento.partition(" ")
+                yield ("info", self._impara(come or "rendila più utile e precisa", quale) if quale else
+                       "Scrivi quale abilità migliorare e come, per esempio: /migliora converti_valuta più valute")
+            elif nome == "approva":
+                yield ("info", self._approva(argomento))
+            elif nome == "rifiuta":
+                yield ("info", self._rifiuta(argomento))
+            elif nome == "abilita":
+                yield ("info", self._abilita(argomento))
             elif nome == "calendario":
                 yield ("info", self._calendario(argomento))
             elif nome == "agenda":
@@ -1087,9 +1133,145 @@ class Assistente:
                 yield ("info", strumenti.timer(minuti, messaggio, self.avvisa))
             else:
                 yield ("info", f"Comando sconosciuto: /{nome}. Scrivi /aiuto per l'elenco.")
-        except (ErroreStrumento, promemoria.ErrorePromemoria, integrazioni.ErroreIntegrazione) as e:
+        except (ErroreStrumento, promemoria.ErrorePromemoria, integrazioni.ErroreIntegrazione,
+                abilita.ErroreAbilita) as e:
             yield ("info", f"Non ci sono riuscito: {e}")
         return None
+
+    # --- Abilità: Jarvis impara cose nuove ---
+
+    def _impara(self, richiesta, da_migliorare=None):
+        """Mette in coda il lavoro di scrivere (o migliorare) un'abilità e risponde subito."""
+        titolo = self.config["come_chiamarmi"]
+        t = f", {titolo}" if titolo else ""
+        lei = self.config["dai_del"] != "tu"
+        if da_migliorare and da_migliorare not in abilita.attive():
+            return f"Non conosco un'abilità che si chiama {da_migliorare}{t}: /abilita mostra quelle che ho."
+        richiesta = richiesta.strip().rstrip(".!")
+        compito = self.avvia_compito(f"Migliorare l'abilità {da_migliorare}: {richiesta}" if da_migliorare else
+                                     f"Imparare a {richiesta}", tipo="abilita", abilita_da_migliorare=da_migliorare)
+        attesa = " Comincio quando finisce la partita." if self.modalita_gioco else ""
+        return (f"Ci lavoro{t}: scrivo l'abilità, la provo e poi {'gliela' if lei else 'te la'} propongo. Ci vorrà "
+                f"qualche minuto (compito {compito.numero}).{attesa}")
+
+    def _scrivi_codice(self, messaggi, stop):
+        """Fa scrivere il codice al cervello più capace che c'è: Claude (se lo usi) o il cervello grande."""
+        if self.config["cervello"] != "locale" and self.claude.pronto:
+            try:
+                pezzi = [e[1] for e in self.claude.rispondi(messaggi[0]["content"], messaggi[1:], None, self._esegui,
+                                                            stop) if e[0] == "grezzo"]
+                return "".join(pezzi)
+            except cervello_claude.ErroreClaude:
+                pass  # si prova con il cervello sul PC
+        modello = self.modello_grande or self.modello
+        dati = {"model": modello, "stream": False, "messages": messaggi,
+                "options": dict(self._opzioni(modello), num_ctx=16384, temperature=0.2)}
+        if "thinking" in self.capacita.get(modello, ()):
+            dati["think"] = True
+        with self._richiesta("/api/chat", dati, timeout=1800) as risposta:
+            return json.load(risposta).get("message", {}).get("content", "")
+
+    def _scrivi_abilita(self, compito):
+        """Scrive l'abilità, la prova nel recinto (fino a tre tentativi) e la propone all'utente."""
+        titolo = self.config["come_chiamarmi"]
+        t = f", {titolo}" if titolo else ""
+        lei = self.config["dai_del"] != "tu"
+        vecchia = compito.abilita_da_migliorare
+        occupati = strumenti.nomi_riservati() | (set(abilita.attive()) - {vecchia})
+        sistema = abilita.ISTRUZIONI + "\nNomi già usati da Jarvis (non usarli): " + ", ".join(sorted(occupati))
+        richiesta = (compito.descrizione.split(": ", 1)[1] if vecchia else
+                     compito.descrizione.removeprefix("Imparare a "))
+        if vecchia:
+            domanda = (f"Ecco l'abilità {vecchia} di adesso:\n```python\n{abilita.codice_di(vecchia)}```\n"
+                       f"Migliorala così: {richiesta}\nTieni NOME = \"{vecchia}\" e riscrivi tutto il file.")
+        else:
+            domanda = f"Impara a {richiesta}"
+        messaggi = [{"role": "system", "content": sistema}, {"role": "user", "content": domanda}]
+        problema = ""
+        for _ in range(3):
+            if compito.stop.is_set():
+                raise _Interrotto
+            testo = self._scrivi_codice(messaggi, compito.stop)
+            codice = abilita.estrai_codice(testo)
+            try:
+                info = abilita.prova(codice, occupati, internet=self.config["internet"])
+                if vecchia and info["nome"] != vecchia:
+                    raise abilita.ErroreAbilita(f"NOME deve restare {vecchia}")
+            except abilita.ErroreAbilita as e:
+                problema = str(e)
+                messaggi += [{"role": "assistant", "content": testo},
+                             {"role": "user", "content": f"Non va: {e}. Correggi e riscrivi tutto il file."}]
+                continue
+            abilita.proponi(codice, info, richiesta)
+            permesso = "il suo permesso" if lei else "il tuo permesso"
+            come = (f"dica \"{self.nome}, approva\" oppure scriva /approva {info['nome']}" if lei else
+                    f"di' \"{self.nome}, approva\" oppure scrivi /approva {info['nome']}")
+            fatto = (f"Ho preparato la nuova versione dell'abilità {vecchia}{t}" if vecchia else
+                     f"Ho imparato una cosa nuova{t}")
+            return (f"{fatto}: {info['descrizione']} Si chiama {info['nome']} e ha superato {info['prove']} "
+                    f"{'prova' if info['prove'] == 1 else 'prove'}. La uso solo con {permesso}: {come} "
+                    f"(/rifiuta {info['nome']} per scartarla).")
+        return (f"Non sono riuscito a imparare a {richiesta}{t}: dopo tre tentativi l'abilità non funziona ancora "
+                f"({problema}).")
+
+    def _quale_proposta(self, nome):
+        """Il nome della proposta di cui si parla: quello scritto, oppure l'unica in attesa."""
+        in_attesa = abilita.proposte()
+        if nome:
+            if nome not in in_attesa:
+                raise abilita.ErroreAbilita(f"non c'è nessuna abilità {nome} in attesa")
+            return nome, in_attesa[nome]
+        if not in_attesa:
+            raise abilita.ErroreAbilita("non ci sono abilità nuove in attesa")
+        if len(in_attesa) > 1:
+            raise abilita.ErroreAbilita("ce ne sono più di una in attesa: " + ", ".join(in_attesa)
+                                        + ". Dimmi quale (per esempio /approva " + next(iter(in_attesa)) + ")")
+        return next(iter(in_attesa.items()))
+
+    def _approva(self, nome):
+        titolo = self.config["come_chiamarmi"]
+        t = f", {titolo}" if titolo else ""
+        try:
+            nome, scheda = self._quale_proposta(nome.strip().lower())
+            sostituita = abilita.approva(nome)
+        except abilita.ErroreAbilita as e:
+            return f"Non posso approvarla{t}: {e}."
+        versione = " La versione di prima resta da parte (/abilita ripristina " + nome + ")." if sostituita else ""
+        return f"Fatto{t}: da ora so usare l'abilità {nome}. {scheda['descrizione']}{versione}"
+
+    def _rifiuta(self, nome):
+        try:
+            nome, _ = self._quale_proposta(nome.strip().lower())
+            abilita.rifiuta(nome)
+        except abilita.ErroreAbilita as e:
+            return f"Non ci sono riuscito: {e}."
+        return f"Ho scartato l'abilità {nome}."
+
+    def _abilita(self, argomento):
+        azione, _, nome = argomento.strip().lower().partition(" ")
+        nome = nome.strip()
+        if azione == "togli" and nome:
+            abilita.togli(nome)
+            return f"Ho tolto l'abilità {nome} (resta tra le versioni vecchie: /abilita ripristina {nome})."
+        if azione == "ripristina" and nome:
+            abilita.ripristina(nome)
+            return f"Ho rimesso la versione precedente dell'abilità {nome}."
+        attive, in_attesa = abilita.attive(), abilita.proposte()
+        if azione:
+            scheda = attive.get(azione) or in_attesa.get(azione)
+            if not scheda:
+                return f"Non conosco l'abilità {azione}: /abilita mostra quelle che ho."
+            stato = "attiva" if azione in attive else "in attesa di approvazione"
+            cartella = abilita.CARTELLA if azione in attive else abilita.CARTELLA / "proposte"
+            parametri = ", ".join(f"{p} ({r['description']})" for p, r in scheda["parametri"].items()) or "nessuno"
+            return (f"{azione} ({stato}): {scheda['descrizione']}\nParametri: {parametri}\n"
+                    f"Richiesta: {scheda.get('richiesta', '')}\nIl codice è in {cartella / (azione + '.py')}")
+        if not attive and not in_attesa:
+            return ("Non ho ancora imparato abilità. Dimmi \"impara a ...\" (per esempio: impara a convertire le "
+                    "valute).")
+        righe = [f"- {n}: {s['descrizione']}" for n, s in attive.items()]
+        righe += [f"- {n} (in attesa di /approva): {s['descrizione']}" for n, s in in_attesa.items()]
+        return "Le abilità che ho imparato:\n" + "\n".join(righe)
 
     def _telefono(self, argomento):
         """Collega il telefono con l'app ntfy: gratis, senza account, il canale è un nome segreto e casuale."""
@@ -1265,9 +1447,10 @@ class Assistente:
         yield ("info", f"Compito {compito.numero} affidato al cervello {cervello}{attesa}. /compiti per vederlo."
                        f"{gioco}")
 
-    def avvia_compito(self, descrizione, contesto=()):
+    def avvia_compito(self, descrizione, contesto=(), tipo="lavoro", abilita_da_migliorare=None):
         with self._lucchetto:
-            compito = Compito(len(self.compiti) + 1, descrizione, [dict(m) for m in contesto])
+            compito = Compito(len(self.compiti) + 1, descrizione, [dict(m) for m in contesto], tipo,
+                              abilita_da_migliorare)
             self.compiti.append(compito)
             if self._lavoratore is None or not self._lavoratore.is_alive():
                 self._lavoratore = threading.Thread(target=self._lavora_ai_compiti, daemon=True)
@@ -1310,6 +1493,8 @@ class Assistente:
                 self.al_termine(compito)
 
     def _esegui_compito(self, compito):
+        if compito.tipo == "abilita":
+            return self._scrivi_abilita(compito)
         modello = self.modello_grande or self.modello
         sistema = self._prompt_di_sistema(modello) + "\n\n" + ISTRUZIONI_COMPITO
         messaggi = ([{"role": "system", "content": sistema}] + compito.contesto

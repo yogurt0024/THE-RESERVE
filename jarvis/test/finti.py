@@ -51,8 +51,11 @@ class FintoOllama(BaseHTTPRequestHandler):
             return self._json({"capabilities": self.CAPACITA[modello]})
         if not dati["messages"]:
             return self._json({"done": True})
-        if dati.get("stream") is False and "format" not in dati:  # diario, occhi: una risposta sola
+        if dati.get("stream") is False and "format" not in dati:  # diario, occhi, abilità: una risposta sola
             ultimo = dati["messages"][-1]
+            if dati["messages"][0]["content"].startswith("Scrivi un'abilità per Jarvis"):
+                return self._json({"message": {"role": "assistant", "content": abilita_scritta(dati["messages"])},
+                                   "done": True})
             contenuto = "Vedo un errore di Minecraft" if ultimo.get("images") else f"Riassunto di {modello}"
             return self._json({"message": {"role": "assistant", "content": contenuto}, "done": True})
         if "format" in dati:  # il modulo di attenzione: decide se una frase senza nome era per Jarvis
@@ -90,6 +93,39 @@ class FintoOllama(BaseHTTPRequestHandler):
                     time.sleep(0.5)
         except (BrokenPipeError, ConnectionResetError):
             pass  # Jarvis ha smesso di leggere: il compito è stato annullato
+
+
+ABILITA_CONTA_VOCALI = """NOME = "conta_vocali"
+DESCRIZIONE = "Conta quante vocali ci sono in una parola o in una frase."
+PARAMETRI = {"testo": {"type": "string", "description": "Il testo da controllare"}}
+OBBLIGATORI = ["testo"]
+
+
+def esegui(argomenti, aiuto):
+    testo = str(argomenti.get("testo", ""))
+    if not testo:
+        return "Dimmi il testo."
+    vocali = sum(1 for lettera in testo.lower() if lettera in "aeiouàèéìòù")
+    return f"In «{testo}» ci sono {vocali} vocali."
+
+
+PROVE = [({"testo": "Jarvis"}, "2 vocali"), ({"testo": "albero"}, "3 vocali"), ({}, "Dimmi il testo")]
+"""
+
+
+def abilita_scritta(messaggi):
+    """Il cervello grande finto che scrive un'abilità: la prima volta sbaglia una prova, poi la corregge.
+    Se gli si chiede di migliorarla, conta anche le consonanti."""
+    tentativi = sum(1 for m in messaggi if m["role"] == "assistant")
+    codice = ABILITA_CONTA_VOCALI
+    if "Migliorala" in messaggi[1]["content"]:
+        codice = codice.replace('return f"In «{testo}» ci sono {vocali} vocali."',
+                                'consonanti = sum(1 for lettera in testo.lower() if lettera.isalpha()) - vocali\n'
+                                '    return f"In «{testo}» ci sono {vocali} vocali e {consonanti} consonanti."')
+        codice = codice.replace('"albero"}, "3 vocali"', '"albero"}, "3 consonanti"')
+    elif tentativi == 0:
+        codice = codice.replace('"2 vocali"', '"5 vocali"')  # una prova sbagliata
+    return f"Ecco l'abilità:\n```python\n{codice}```\nFatto."
 
 
 class FintoClaude(BaseHTTPRequestHandler):
