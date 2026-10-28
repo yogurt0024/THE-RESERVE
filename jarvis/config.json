@@ -1,6 +1,7 @@
 {
   "nome": "Jarvis",
-  "come_chiamarmi": "",
+  "come_chiamarmi": "signore",
+  "dai_del": "lei",
   "citta": "",
   "modello": "qwen3:4b-instruct",
   "modello_ragionamento": "qwen3:4b",

@@ -65,6 +65,8 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 | `/calcola <conto>`            | per esempio `/calcola (12+3)*2`                     |
 | `/timer <minuti> [messaggio]` | per esempio `/timer 10 pasta`                       |
 | `/sistema`                    | diagnostica del PC (memoria, disco, scheda video)   |
+| `/chiamami <appellativo>`     | come vuoi essere chiamato (`/chiamami` da solo: nessun appellativo) |
+| `/tu` oppure `/lei`           | se Jarvis ti dà del tu o del lei                    |
 | `/ricorda <cosa>`             | salva un'informazione nella memoria permanente      |
 | `/memoria`                    | mostra cosa ricorda                                 |
 | `/dimentica <numero>`         | cancella un ricordo (`/dimentica tutto` li cancella tutti) |
@@ -74,6 +76,9 @@ Puoi parlare normalmente, ma ci sono anche dei comandi rapidi:
 
 Nella finestra, il pulsante **Ferma** (o il tasto Esc) interrompe una risposta; nel Prompt dei comandi si usa Ctrl+C.
 
+Anche senza comandi puoi dire **"chiamami capo"** (o il tuo nome), **"non chiamarmi più signore"**,
+**"dammi del tu"** o **"dammi del lei"**: Jarvis cambia subito e se lo ricorda anche alla prossima apertura.
+
 ## Personalizzare
 
 Apri `config.json` con il Blocco note:
@@ -82,6 +87,7 @@ Apri `config.json` con il Blocco note:
 |-------------------------|-----------------------------------------------------------------|
 | `nome`                  | il nome dell'assistente (per esempio `"Friday"`)                |
 | `come_chiamarmi`        | come deve chiamarti (per esempio `"capo"`); vuoto = nessuno     |
+| `dai_del`               | `"lei"` (formale, come il vero Jarvis) oppure `"tu"`            |
 | `citta`                 | la tua città: la usa per il meteo quando non dici dove          |
 | `modello`               | il modello per le risposte normali (vedi sotto)                 |
 | `modello_ragionamento`  | il modello per il ragionamento profondo; vuoto = nessuno        |

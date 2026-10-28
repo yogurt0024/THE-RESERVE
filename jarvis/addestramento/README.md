@@ -65,6 +65,10 @@ Il ragionamento profondo continua a usare `qwen3:4b`. Se il nuovo Jarvis non ti 
 
 ## Renderlo ancora più tuo
 
+Il modello addestrato dà del **lei**, come il vero Jarvis: gli esempi sono scritti così. Con `"dai_del": "tu"`
+proverà a darti del tu, ma a volte potrebbe tornare al lei. Come chiamarti, invece, lo puoi cambiare
+liberamente ("chiamami capo"): gli esempi usano appellativi diversi apposta.
+
 - Apri `dialoghi.py` e aggiungi o cambia i dialoghi. `{T}` diventa ", signore" (o come hai scelto di essere
   chiamato in `config.json`).
 - Poi rigenera gli esempi con `python genera_dataset.py` e ripeti dal passo 1.

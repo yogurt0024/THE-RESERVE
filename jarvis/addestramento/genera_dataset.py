@@ -900,7 +900,23 @@ def esempi_se_stesso():
               ("Che modello sei?", f"Sono il modello {MODELLO}, e giro tramite Ollama interamente sul suo PC{{T}}."),
               ("Usi internet?", "Solo per meteo, notizie e Wikipedia, e solo quando servono{T}. Per pensare non ne "
                                 "ho bisogno: il modello gira sul suo PC, e le conversazioni restano lì.")]
-    return [esempio(Contesto(), [utente(d), jarvis(r)]) for d, r in coppie for _ in range(2)]
+    esempi = [esempio(Contesto(), [utente(d), jarvis(r)]) for d, r in coppie for _ in range(2)]
+    # Quando l'utente cambia appellativo o forma, Jarvis aggiorna config.json prima di rispondere:
+    # il prompt di sistema contiene già la scelta nuova.
+    for domanda, titolo, dai_del, risposta in [
+        ("Chiamami capo", "capo", "lei", "Come desidera, capo."),
+        ("Jarvis, chiamami comandante", "comandante", "lei", "Ricevuto, comandante. Da ora la chiamerò così."),
+        ("Chiamami signore", "signore", "lei", "Come desidera, signore."),
+        ("Non chiamarmi più signore", "", "lei", "Come preferisce. Niente più appellativi."),
+        ("Dammi del tu", "", "tu", "D'accordo, da ora ti do del tu. Come posso aiutarti?"),
+        ("Dammi pure del tu", "capo", "tu", "Va bene, capo: da ora ti do del tu."),
+        ("Dammi del lei", "signore", "lei", "Come desidera, signore. Da ora le do del lei."),
+    ]:
+        ctx = Contesto()
+        ctx.titolo = ctx.config["come_chiamarmi"] = titolo
+        ctx.config["dai_del"] = dai_del
+        esempi.append(esempio(ctx, [utente(domanda), jarvis(risposta)]))
+    return esempi
 
 
 def esempi_dialoghi():
@@ -937,6 +953,7 @@ def controlla(e):
             attese = len(m["tool_calls"])
         elif m["role"] == "assistant":
             assert m["content"].strip() and "{T}" not in m["content"] and "**" not in m["content"], m["content"]
+            assert not any(cervello._emoji(c) for c in m["content"]), m["content"]
     assert attese == 0
 
 

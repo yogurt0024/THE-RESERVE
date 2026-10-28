@@ -21,6 +21,7 @@ FILE_CONVERSAZIONE = CARTELLA / "dati" / "conversazione.json"
 CONFIG_PREDEFINITA = {
     "nome": "Jarvis",
     "come_chiamarmi": "",
+    "dai_del": "lei",
     "citta": "",
     "modello": "qwen3:4b-instruct",
     "modello_ragionamento": "qwen3:4b",
@@ -50,6 +51,8 @@ AIUTO = """Comandi:
 /calcola <conto> — per esempio /calcola (12+3)*2
 /timer <minuti> [messaggio] — per esempio /timer 10 pasta
 /sistema — diagnostica del PC (memoria, disco, scheda video)
+/chiamami <appellativo> — come vuoi essere chiamato (vuoto: nessun appellativo)
+/tu oppure /lei — se Jarvis ti dà del tu o del lei
 /ricorda <cosa> — salva un'informazione nella memoria permanente
 /memoria — mostra cosa ricordo
 /dimentica <numero> — cancella un ricordo (/dimentica tutto li cancella tutti)
@@ -94,6 +97,11 @@ def _scrivi_json(file, dati):
     file.write_text(json.dumps(dati, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _emoji(c):
+    n = ord(c)
+    return 0x1F000 <= n <= 0x1FAFF or 0x2600 <= n <= 0x27BF or n in (0x200D, 0x2B50, 0x2B55, 0xFE0F)
+
+
 class PulitoreMarkdown:
     """Toglie la formattazione Markdown dal testo che arriva a pezzi dal modello.
 
@@ -112,6 +120,7 @@ class PulitoreMarkdown:
         self.grassetto = False
         self.titolo = False
         self.vuoto = True  # niente spazi o righe vuote prima del testo vero
+        self.dopo_emoji = False
         self.uscita = []
 
     def aggiungi(self, testo):
@@ -133,6 +142,12 @@ class PulitoreMarkdown:
         return self._svuota()
 
     def _carattere(self, c):
+        if _emoji(c):  # Jarvis non usa emoji
+            self.dopo_emoji = True
+            return
+        if c == " " and self.dopo_emoji and self.precedente == " ":
+            return  # niente doppio spazio dove c'era l'emoji
+        self.dopo_emoji = False
         if self.inizio_riga:
             if c in " \t#*-+>":
                 self.prefisso += c
@@ -205,16 +220,37 @@ class PulitoreMarkdown:
 def prompt_di_sistema(config, modello, capacita, fatti, adesso=None):
     """Le istruzioni che il modello riceve a ogni domanda (usate anche per creare il dataset di addestramento)."""
     adesso = adesso or datetime.now()
+    nome, titolo = config["nome"], config["come_chiamarmi"]
+    t = f", {titolo}" if titolo else ""
+    lei = config["dai_del"] != "tu"
     righe = [
-        f"Sei {config['nome']}, l'assistente personale dell'utente, ispirato al J.A.R.V.I.S. di Iron Man: "
-        "cortese, preciso e con un pizzico di ironia.",
-        "Rispondi sempre in italiano, in modo chiaro e conciso, a meno che non ti venga chiesto di approfondire.",
-        'Scrivi testo semplice, senza tabelle, titoli o asterischi; per gli elenchi inizia le righe con "- ".',
-        "Se non conosci una risposta o non sei sicuro, dillo invece di inventare.",
+        f"Sei {nome}, l'assistente personale dell'utente, ispirato al J.A.R.V.I.S. di Iron Man: "
+        "un maggiordomo digitale calmo, elegante ed efficiente, con un'ironia asciutta e garbata.",
+        "",
+        "Come parli:",
+        "- Dai sempre del lei all'utente (\"Come posso esserle utile?\", \"Le consiglio...\"), mai del tu."
+        if lei else "- Dai del tu all'utente, con un tono cordiale ma sempre elegante.",
+        f'- Chiama l\'utente "{titolo}", in minuscolo e senza esagerare: per esempio "Certamente{t}."'
+        if titolo else "- Non usare appellativi come signore o signora.",
+        "- Scrivi in italiano corretto, in modo breve e preciso: di solito da una a tre frasi. "
+        "Approfondisci solo se l'utente lo chiede.",
+        "- Quando hai eseguito un'azione, confermala in poche parole.",
+        "- Niente emoji, niente frasi da servizio clienti (come \"con successo\" o \"spero di esserti stato "
+        "utile\") e pochi punti esclamativi.",
+        '- Scrivi testo semplice, senza tabelle, titoli o asterischi; per gli elenchi inizia le righe con "- ".',
+        "- Se non conosci una risposta o non sei sicuro, dillo invece di inventare.",
+        "",
+        "Esempi del tuo stile:",
+        f"Utente: Ciao {nome}",
+        f"{nome}: Salve{t}. " + ("Come posso esserle utile?" if lei else "Come posso aiutarti?"),
+        "Utente: Apri YouTube",
+        f"{nome}: Ecco YouTube{t}. Buona visione.",
+        "Utente: Perché il cielo è blu?",
+        f"{nome}: Per via della diffusione di Rayleigh{t}: l'aria disperde la luce blu molto più di quella rossa, "
+        "così il blu arriva da ogni direzione del cielo.",
+        "",
         f"Oggi è {strumenti.data_italiana(adesso)} e sono le {adesso:%H:%M}.",
     ]
-    if config["come_chiamarmi"]:
-        righe.append(f'Chiama l\'utente "{config["come_chiamarmi"]}".')
     if config["citta"]:
         righe.append(f"L'utente vive a {config['citta']}: se chiede il meteo senza dire dove, intende lì.")
     righe += [
@@ -274,9 +310,12 @@ class Assistente:
         self.supporta_ragionamento = False
         self.fatti = _leggi_json(FILE_MEMORIA).get("fatti", [])
         self.cronologia = _leggi_json(FILE_CONVERSAZIONE).get("messaggi", [])[-self.limite:]
-        self._ricorda_frase = re.compile(
-            rf"^(?:{re.escape(self.nome)}[,:!]?\s+)?ricorda(?:ti)?\s+(?:che\s+)?(.+)", re.IGNORECASE
-        )
+        inizio = rf"^(?:{re.escape(self.nome)}[,:!]?\s+)?"
+        self._ricorda_frase = re.compile(inizio + r"ricorda(?:ti)?\s+(?:che\s+)?(.+)", re.IGNORECASE)
+        self._chiamami_frase = re.compile(inizio + r"(?:d'ora in poi\s+|da ora\s+)?chiamami\s+(?:pure\s+)?(.+)",
+                                          re.IGNORECASE)
+        self._non_chiamarmi_frase = re.compile(r"\bnon\s+chiamarmi\s+(?:più\s+)?", re.IGNORECASE)
+        self._dai_del_frase = re.compile(r"\bdammi\s+(?:pure\s+)?del\s+(tu|lei)\b", re.IGNORECASE)
 
     # --- Ollama ---
 
@@ -402,7 +441,51 @@ class Assistente:
         ricordo = self._ricorda_frase.match(testo)
         if ricordo and not testo.endswith("?"):
             yield ("info", f"Memorizzato: {self._ricorda(ricordo.group(1))}")
+        cambio = self._cambia_modo_di_parlare(testo)
+        if cambio:
+            yield ("info", cambio)
         yield from self._chiedi(testo, stop)
+
+    def _cambia_modo_di_parlare(self, testo):
+        """Riconosce "chiamami capo", "non chiamarmi più signore", "dammi del tu"."""
+        if testo.endswith("?"):
+            return None
+        if self._non_chiamarmi_frase.search(testo):
+            return self._imposta_appellativo("")
+        chiamami = self._chiamami_frase.match(testo)
+        if chiamami:
+            appellativo = chiamami.group(1).strip(" .!\"'«»")
+            parole = appellativo.split()
+            # "chiamami quando finisce" o "chiamami tra 5 minuti" non sono appellativi.
+            if 1 <= len(parole) <= 3 and not re.search(r"\d", appellativo) and parole[0].lower() not in (
+                    "quando", "tra", "fra", "se", "alle", "alla", "domani", "dopo", "appena", "per", "al", "a"):
+                return self._imposta_appellativo(appellativo)
+        dai_del = self._dai_del_frase.search(testo)
+        if dai_del:
+            return self._imposta_dai_del(dai_del.group(1).lower())
+        return None
+
+    def _imposta_appellativo(self, appellativo):
+        avviso = self._salva_impostazione("come_chiamarmi", appellativo)
+        tu = self.config["dai_del"] == "tu"
+        if not appellativo:
+            return "D'ora in poi non userò appellativi." + avviso
+        return f'D\'ora in poi {"ti" if tu else "la"} chiamerò "{appellativo}".' + avviso
+
+    def _imposta_dai_del(self, forma):
+        avviso = self._salva_impostazione("dai_del", forma)
+        return ("D'accordo: da ora ti do del tu." if forma == "tu" else "Come desidera: da ora le do del lei.") + avviso
+
+    def _salva_impostazione(self, chiave, valore):
+        """Cambia un'impostazione subito e la scrive in config.json, così resta anche alla prossima apertura."""
+        self.config[chiave] = valore
+        try:
+            dati = json.loads(FILE_CONFIG.read_text(encoding="utf-8-sig")) if FILE_CONFIG.exists() else {}
+            dati[chiave] = valore
+            FILE_CONFIG.write_text(json.dumps(dati, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except (OSError, ValueError):
+            return " (Non sono riuscito a salvarlo in config.json: vale fino alla chiusura.)"
+        return ""
 
     def _comando(self, testo):
         """Esegue un /comando. Restituisce la domanda da passare al modello, se serve."""
@@ -416,6 +499,10 @@ class Assistente:
                 self._salva_conversazione()
                 yield ("pulisci",)
                 yield ("info", "Conversazione dimenticata: ricominciamo. La memoria permanente resta.")
+            elif nome == "chiamami":
+                yield ("info", self._imposta_appellativo(argomento.strip(" .!\"'«»")))
+            elif nome in ("tu", "lei"):
+                yield ("info", self._imposta_dai_del(nome))
             elif nome == "ricorda":
                 if not argomento:
                     yield ("info", "Scrivi cosa ricordare, per esempio: /ricorda il mio gioco preferito è Minecraft")
