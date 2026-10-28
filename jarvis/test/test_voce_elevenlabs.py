@@ -39,7 +39,7 @@ class TestElevenLabs(unittest.TestCase):
         self.assertEqual(el.salva_chiave("sbagliata"),
                          "La chiave non funziona: la chiave API di ElevenLabs non è valida")
         self.assertFalse(el.FILE_CHIAVE.exists())
-        self.assertEqual(el.salva_chiave(" chiave-buona\n"), "Chiave di ElevenLabs salvata sul PC. Piano free: "
+        self.assertEqual(el.salva_chiave(" chiave-buona\n"), "Chiave di ElevenLabs salvata sul PC. Piano creator: "
                                                             "questo mese hai usato 1.200 caratteri su 10.000.")
         self.assertEqual(el.leggi_chiave(), "chiave-buona")
 
@@ -53,6 +53,16 @@ class TestElevenLabs(unittest.TestCase):
         self.assertEqual(richiesta["voice_description"], el.DESCRIZIONE_JARVIS)
         self.assertEqual(el.crea_voce("provvisoria-2"), "voce-jarvis")
         self.assertEqual(finti.FintoElevenLabs.richieste[-1]["generated_voice_id"], "provvisoria-2")
+
+    def test_piano_gratuito(self):
+        self.assertTrue(el.salva_chiave("chiave-gratis").endswith("Piano free: questo mese hai usato 1.200 "
+                                                                  "caratteri su 10.000."))
+        with self.assertRaises(el.ErroreElevenLabs) as errore:
+            el.progetta_voci()
+        self.assertEqual(errore.exception.stato, "solo_a_pagamento")
+        self.assertEqual(str(errore.exception), "questa funzione di ElevenLabs c'è solo nei piani a pagamento")
+        self.assertEqual([v["voice_id"] for v in el.voci_disponibili()], ["anna", "bruno", "giorgio"])
+        self.assertEqual(len(el.sintetizza("Ciao.", "giorgio")), 50)  # le voci pronte vanno anche gratis
 
     def test_discorso_continuo(self):
         el.salva_chiave("chiave-buona")

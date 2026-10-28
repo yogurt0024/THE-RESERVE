@@ -60,19 +60,13 @@ def salva_scelta(**impostazioni):
     FILE_CONFIG.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def crea_voce_elevenlabs(nome, t):
-    """Crea con ElevenLabs una voce nuova per Jarvis, da una descrizione. Restituisce True se è andata."""
-    import voce
+def prepara_chiave_elevenlabs():
+    """Controlla (o chiede) la chiave di ElevenLabs. Restituisce il piano ("free", "starter"...), "" se non si sa,
+    oppure None se la chiave non c'è o non funziona."""
     import voce_elevenlabs as el
 
-    if el.leggi_chiave():
-        try:
-            print(el.descrivi_abbonamento(el.richiesta("/v1/user/subscription")))
-        except el.ErroreElevenLabs as e:
-            if e.stato != "missing_permissions":
-                print(f"Problema con ElevenLabs: {e}")
-                return False
-    else:
+    nuova = not el.leggi_chiave()
+    if nuova:
         print("\nServe una chiave API di ElevenLabs (il piano gratuito va bene per cominciare):")
         print("  1. Crea un account su https://elevenlabs.io")
         print("  2. Apri la sezione API Keys (di solito sotto Developers, nel menu a sinistra) e crea una chiave.")
@@ -80,13 +74,47 @@ def crea_voce_elevenlabs(nome, t):
         print("  3. Copiala e incollala qui sotto: mentre la incolli non si vede. Non mandarla mai a nessuno.")
         print(el.salva_chiave(getpass.getpass("Chiave: ")))
         if not el.leggi_chiave():
-            return False
+            return None
+    try:
+        abbonamento = el.richiesta("/v1/user/subscription")
+    except el.ErroreElevenLabs as e:
+        if e.stato == "missing_permissions":
+            return ""
+        print(f"Problema con ElevenLabs: {e}")
+        return None
+    if not nuova:  # con una chiave appena salvata, il piano l'ha già scritto salva_chiave()
+        print(el.descrivi_abbonamento(abbonamento))
+    return abbonamento.get("tier", "")
+
+
+def salva_voce_elevenlabs(id_voce, nome, t, descrizione):
+    """Fa dire una frase alla voce scelta e la salva come voce di Jarvis."""
+    import voce_elevenlabs as el
+
+    try:
+        audio = el.sintetizza(f"Eccomi{t}. Da questo momento parlerò con questa voce.", id_voce)
+    except el.ErroreElevenLabs as e:
+        print(f"Questa voce non funziona: {e}")
+        return False
+    salva_scelta(voce="elevenlabs", voce_elevenlabs=id_voce, effetto_voce=0.0)
+    ascolta(audio, el.FREQUENZA)
+    print(f"\nFatto! {nome} ora parla con {descrizione}.")
+    return True
+
+
+def progetta_voce(nome, t):
+    """Fa creare a ElevenLabs voci nuove dalla descrizione (solo piani a pagamento). True, False o "a pagamento"."""
+    import voce
+    import voce_elevenlabs as el
+
     descrizione, seme = el.DESCRIZIONE_JARVIS, None
     while True:
         print("\nElevenLabs crea alcune voci nuove dalla descrizione (qualche secondo)...")
         try:
             voci = el.progetta_voci(descrizione, seme=seme)
         except el.ErroreElevenLabs as e:
+            if e.stato == "solo_a_pagamento":
+                return "a pagamento"
             print(f"Non ci sono riuscito: {e}")
             return False
         for numero, (_, audio, frequenza) in enumerate(voci, 1):
@@ -116,14 +144,90 @@ def crea_voce_elevenlabs(nome, t):
             continue
         try:
             id_voce = el.crea_voce(voci[int(scelta) - 1][0], nome=nome, descrizione=descrizione)
-            audio = el.sintetizza(f"Eccomi{t}. Da questo momento parlerò con questa voce.", id_voce)
         except el.ErroreElevenLabs as e:
             print(f"Non sono riuscito a salvarla: {e}")
             return False
-        salva_scelta(voce="elevenlabs", voce_elevenlabs=id_voce, effetto_voce=0.0)
+        return salva_voce_elevenlabs(id_voce, nome, t, f"la voce {scelta} (la trovi anche nel tuo account ElevenLabs)")
+
+
+def scegli_voce_pronta(nome, t):
+    """Fa sentire in italiano le voci maschili già pronte nel tuo account ElevenLabs (vanno bene anche gratis)."""
+    import voce
+    import voce_elevenlabs as el
+
+    try:
+        voci = [v for v in el.voci_disponibili() if (v.get("labels") or {}).get("gender", "male") == "male"]
+    except el.ErroreElevenLabs as e:
+        print(f"Non riesco a leggere le voci: {e}")
+        return False
+    # Prima le voci tue, poi quelle britanniche (le più vicine allo stile di Jarvis), poi le altre.
+    voci.sort(key=lambda v: (v.get("category") == "premade",
+                             "brit" not in str((v.get("labels") or {}).get("accent", "")).lower()))
+    voci = voci[:8]
+    if not voci:
+        print("Nel tuo account non trovo voci maschili.")
+        return False
+    frase = f"Buonasera{t}. Sono {nome}, e tutti i sistemi sono operativi."
+    print(f"\nTi faccio sentire {len(voci)} voci in italiano (ogni prova usa circa {len(frase)} dei tuoi caratteri).")
+    esempi = {}
+    for v in voci:
+        etichette = v.get("labels") or {}
+        dettagli = ", ".join(x for x in (etichette.get("accent"), etichette.get("age"), etichette.get("description"))
+                             if x)
+        numero = str(len(esempi) + 1)
+        print(f"\n{numero}. {v.get('name', '?')}" + (f" ({dettagli})" if dettagli else ""), flush=True)
+        try:
+            audio = el.sintetizza(frase, v["voice_id"])
+        except el.ErroreElevenLabs as e:
+            print(f"   non disponibile: {e}")
+            continue
+        esempi[numero] = (v, audio)
+        voce.salva_wav(CARTELLA_ESEMPI / f"elevenlabs-{numero}.wav", audio, el.FREQUENZA)
         ascolta(audio, el.FREQUENZA)
-        print(f"\nFatto! {nome} ora parla con la voce {scelta}. La trovi anche nel tuo account ElevenLabs.")
-        return True
+    if not esempi:
+        return False
+    while True:
+        scelta = domanda(f"\nQuale tieni? Il numero ({', '.join(esempi)}), r e il numero per riascoltarla "
+                         "(per esempio r1), x per lasciar perdere: ",
+                         tuple(esempi) + tuple(f"r{n}" for n in esempi) + ("x",))
+        if scelta == "x":
+            return False
+        if not scelta.startswith("r"):
+            break
+        ascolta(esempi[scelta[1:]][1], el.FREQUENZA)
+    v = esempi[scelta][0]
+    return salva_voce_elevenlabs(v["voice_id"], nome, t, f"la voce {v.get('name', '')} di ElevenLabs")
+
+
+def incolla_id_voce(nome, t):
+    print("\nSul sito di ElevenLabs apri Voices e scegli o crea la voce che vuoi (per esempio con Voice Design,")
+    print("se il tuo piano lo permette, o dalla Voice Library aggiungendola alle tue voci). Poi aprila e copia il")
+    print("suo ID (di solito c'è il pulsante \"Copy voice ID\"). È una sequenza di lettere e numeri.")
+    id_voce = input("ID della voce: ").strip()
+    if not id_voce.isalnum():
+        print("Non sembra un ID di ElevenLabs.")
+        return False
+    return salva_voce_elevenlabs(id_voce, nome, t, "la voce che hai scelto sul sito")
+
+
+def crea_voce_elevenlabs(nome, t):
+    """La voce di Jarvis su ElevenLabs: creata apposta (piani a pagamento) o scelta tra quelle pronte."""
+    piano = prepara_chiave_elevenlabs()
+    if piano is None:
+        return False
+    if piano != "free":
+        esito = progetta_voce(nome, t)
+        if esito != "a pagamento":
+            return esito
+    print("\nCol piano gratuito ElevenLabs non lascia creare voci nuove dalle API. Ci sono due alternative:")
+    print("  p. scegli tra le voci già pronte di ElevenLabs: fluide e naturali, ti faccio sentire le maschili")
+    print("  i. incolla l'ID di una voce che hai scelto o creato sul sito di ElevenLabs")
+    scelta = domanda("Cosa preferisci? (p, i, oppure x per lasciar perdere) ", ("p", "i", "x"))
+    if scelta == "p":
+        return scegli_voce_pronta(nome, t)
+    if scelta == "i":
+        return incolla_id_voce(nome, t)
+    return False
 
 
 def main():

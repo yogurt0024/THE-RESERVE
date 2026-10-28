@@ -94,7 +94,9 @@ def _spiega_errore(errore):
     if isinstance(dettaglio, str):
         dettaglio = {"message": dettaglio}
     stato, messaggio = dettaglio.get("status", ""), dettaglio.get("message", "")
-    if stato == "missing_permissions":
+    if errore.code in (402, 403) and ("paid" in messaggio.lower() or "subscription" in messaggio.lower()):
+        spiegazione, stato = "questa funzione di ElevenLabs c'è solo nei piani a pagamento", "solo_a_pagamento"
+    elif stato == "missing_permissions":
         spiegazione = f"alla chiave API manca un permesso ({messaggio})"
     elif stato == "quota_exceeded":
         spiegazione = "hai finito i caratteri del mese su ElevenLabs"
@@ -131,6 +133,11 @@ def progetta_voci(descrizione=DESCRIZIONE_JARVIS, testo=TESTO_DI_PROVA, seme=Non
     if not voci:
         raise ErroreElevenLabs("ElevenLabs non ha creato nessuna voce: riprova cambiando la descrizione")
     return voci
+
+
+def voci_disponibili():
+    """Le voci che il tuo account può usare: quelle già pronte di ElevenLabs e quelle che hai creato o aggiunto tu."""
+    return richiesta("/v1/voices").get("voices", [])
 
 
 def crea_voce(id_provvisorio, nome="Jarvis", descrizione=DESCRIZIONE_JARVIS):

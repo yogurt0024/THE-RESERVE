@@ -183,7 +183,14 @@ def internet_finto(url, parametri=None):
 
 
 class FintoElevenLabs(BaseHTTPRequestHandler):
-    """Risponde come l'API di ElevenLabs. La chiave giusta è "chiave-buona"; la voce "esaurita" ha finito i crediti."""
+    """Risponde come l'API di ElevenLabs. "chiave-buona" è di un piano a pagamento, "chiave-gratis" del piano
+    gratuito, che non può creare voci; la voce "esaurita" ha finito i crediti."""
+
+    CHIAVI = {"chiave-buona": "creator", "chiave-gratis": "free"}
+    VOCI = [{"voice_id": "anna", "name": "Anna", "category": "premade", "labels": {"gender": "female"}},
+            {"voice_id": "bruno", "name": "Bruno", "category": "premade", "labels": {"gender": "male", "accent": "american"}},
+            {"voice_id": "giorgio", "name": "Giorgio", "category": "premade",
+             "labels": {"gender": "male", "accent": "british", "description": "warm"}}]
 
     richieste = []
 
@@ -204,16 +211,23 @@ class FintoElevenLabs(BaseHTTPRequestHandler):
 
     def do_GET(self):
         FintoElevenLabs.richieste.append({"percorso": self.path})
-        if self.headers.get("xi-api-key") != "chiave-buona":
+        piano = self.CHIAVI.get(self.headers.get("xi-api-key"))
+        if piano is None:
             return self._errore(401, "invalid_api_key")
-        self._rispondi(200, {"tier": "free", "character_count": 1200, "character_limit": 10000})
+        if self.path == "/v1/voices":
+            return self._rispondi(200, {"voices": self.VOCI})
+        self._rispondi(200, {"tier": piano, "character_count": 1200, "character_limit": 10000})
 
     def do_POST(self):
         corpo = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         FintoElevenLabs.richieste.append({"percorso": self.path, **corpo})
-        if self.headers.get("xi-api-key") != "chiave-buona":
+        piano = self.CHIAVI.get(self.headers.get("xi-api-key"))
+        if piano is None:
             return self._errore(401, "invalid_api_key")
         percorso = self.path.split("?")[0]
+        if percorso.startswith("/v1/text-to-voice") and piano == "free":
+            return self._rispondi(403, {"detail": {"status": "payment_required", "message": (
+                "Creating a voice through the API is only available on a paid plan.")}})
         if percorso == "/v1/text-to-voice/design":
             anteprime = [{"generated_voice_id": f"provvisoria-{n}", "media_type": "audio/pcm", "duration_secs": 1.0,
                           "audio_base_64": base64.b64encode(struct.pack("<2400h", *[n * 1000] * 2400)).decode()}
@@ -223,7 +237,7 @@ class FintoElevenLabs(BaseHTTPRequestHandler):
             return self._rispondi(200, {"voice_id": "voce-jarvis", "name": corpo["voice_name"]})
         if percorso == "/v1/text-to-speech/esaurita":
             return self._errore(401, "quota_exceeded")
-        if percorso == "/v1/text-to-speech/voce-jarvis":
+        if percorso.split("/")[-1] in ("voce-jarvis", "giorgio", "bruno", "anna"):
             campioni = 10 * len(corpo["text"])
             return self._rispondi(200, struct.pack(f"<{campioni}h", *[3000] * campioni), "audio/pcm")
         self._errore(404, "voice_not_found")

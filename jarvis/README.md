@@ -227,10 +227,14 @@ resto lo trovi scritto nella finestra.
 
 ### La voce di Jarvis
 
-La voce più fluida e naturale è quella creata su **ElevenLabs**: `py -3.12 prova_voci.py` te la fa creare in un
-paio di minuti. ElevenLabs inventa alcune voci nuove partendo da una descrizione (un uomo calmo ed elegante, con
-un'ironia asciutta, come un maggiordomo digitale), tu le ascolti e tieni quella che preferisci. È una voce nuova,
-fatta solo per Jarvis: non copia nessuno.
+La voce più fluida e naturale è quella di **ElevenLabs**: `py -3.12 prova_voci.py` te la fa scegliere in un paio
+di minuti.
+- **Con il piano gratuito** ti fa sentire in italiano le voci maschili già pronte di ElevenLabs e tieni quella
+  che preferisci (quelle britanniche sono le più vicine allo stile di Jarvis). In alternativa puoi incollare l'ID
+  di una voce che hai scelto sul sito.
+- **Con un piano a pagamento** ElevenLabs inventa alcune voci nuove partendo da una descrizione (un uomo calmo
+  ed elegante, con un'ironia asciutta, come un maggiordomo digitale): una voce fatta solo per Jarvis, che non
+  copia nessuno.
 
 - **Cosa serve**: un account su <https://elevenlabs.io> e una chiave API (sezione API Keys, di solito sotto
   Developers). `prova_voci.py` ti chiede di incollarla e la salva solo sul PC, in `dati/chiave_elevenlabs.txt`;
