@@ -159,6 +159,57 @@ class TestModelloLocale(Base):
         self.assertNotIn("chiedi_al_cervello_avanzato",
                          [s["function"]["name"] for s in finti.FintoOllama.richieste[-1].get("tools", [])])
 
+    @staticmethod
+    def ultima_al_modello(modello):
+        return [r for r in finti.FintoOllama.richieste if r.get("model") == modello and r.get("messages")][-1]
+
+    def test_domanda_a_voce(self):
+        j = self.jarvis()
+        list(j.gestisci("Che ore sono?", a_voce=True))
+        sistema = finti.FintoOllama.richieste[-1]["messages"][0]["content"]
+        self.assertIn(cervello.ISTRUZIONI_VOCE, sistema)
+        self.assertIn("Non puoi vedere lo schermo, sentire la voce", sistema)
+        j.voce_attiva = True  # la finestra lo accende quando il microfono funziona
+        self.chiedi(j, "E domani?")
+        sistema = finti.FintoOllama.richieste[-1]["messages"][0]["content"]
+        self.assertNotIn(cervello.ISTRUZIONI_VOCE, sistema)
+        self.assertIn("Senti l'utente quando ti chiama per nome", sistema)
+
+    def test_modalita_gioco(self):
+        j = self.jarvis()
+        testo, _, _ = self.chiedi(j, "Attiva la modalità gioco")
+        self.assertTrue(testo.startswith("Modalità gioco attiva, signore: la scheda video è tutta sua."))
+        self.assertIn(0, [r.get("keep_alive") for r in finti.FintoOllama.richieste])  # modelli tolti dalla scheda
+        _, avvisi, _ = self.chiedi(j, "Spiegami la relatività")
+        ultima = self.ultima_al_modello("qwen3.5:4b")
+        self.assertEqual(ultima["options"]["num_gpu"], 0)  # risponde il veloce, sul processore
+        self.assertNotIn("chiedi_al_cervello_avanzato", [s["function"]["name"] for s in ultima["tools"]])
+        _, avvisi, _ = self.chiedi(j, "in background cercami le novità su Minecraft")
+        self.assertTrue(avvisi[0].endswith("Lo inizio quando finisce la modalità gioco."))
+        time.sleep(1.5)
+        self.assertEqual(j.compiti[0].stato, "in coda")  # il cervello grande aspetta la fine della partita
+        testo, _, _ = self.chiedi(j, "Fine modalità gioco")
+        self.assertEqual(testo, "Modalità gioco terminata, signore: torno a pieno regime. Riprendo i compiti in "
+                                "attesa (1).")
+        self.assertEqual(self.aspetta_compito().stato, "completato")
+        self.chiedi(j, "Ciao")
+        self.assertNotIn("num_gpu", self.ultima_al_modello("qwen3.5:4b")["options"])
+        _, avvisi, _ = self.chiedi(j, "/gioco")
+        self.assertTrue(avvisi[0].startswith("Modalità gioco attiva"))
+
+    def test_veloce_sul_processore_mentre_lavora_il_grande(self):
+        j = self.jarvis()
+        self.chiedi(j, "in background un lavoro lento")
+        for _ in range(100):
+            if j.compiti[0].stato == "in corso":
+                break
+            time.sleep(0.05)
+        self.chiedi(j, "Ciao")
+        # La scheda video è occupata dal cervello grande: il veloce non aspetta il suo turno.
+        self.assertEqual(self.ultima_al_modello("qwen3.5:4b")["options"]["num_gpu"], 0)
+        self.assertNotIn("num_gpu", self.ultima_al_modello("qwen3.6:35b-a3b")["options"])
+        self.aspetta_compito()
+
     def test_memoria_e_modo_di_parlare(self):
         j = self.jarvis()
         _, avvisi, _ = self.chiedi(j, "Ricordati che il mio gioco preferito è Minecraft")

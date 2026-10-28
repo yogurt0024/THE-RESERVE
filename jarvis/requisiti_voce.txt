@@ -1,0 +1,8 @@
+# Le librerie per la voce e l'ascolto di Jarvis. Servono Python 3.12 e questo comando:
+#     py -3.12 -m pip install -r requisiti_voce.txt
+# (prova_voci.py le installa da solo se mancano)
+numpy
+sounddevice
+onnx-asr[cpu]
+piper-tts
+anthropic

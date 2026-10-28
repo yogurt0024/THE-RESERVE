@@ -1,16 +1,22 @@
 """La finestra grafica di Jarvis, fatta con tkinter (incluso in Python).
 
 Il modello lavora in un thread separato e manda gli eventi alla finestra
-attraverso una coda, così la finestra non si blocca mai.
+attraverso una coda, così la finestra non si blocca mai. Lo stesso fanno
+l'orecchio (ascolto.py) e la voce (voce.py), che lavorano in background.
 """
 
 import queue
+import random
 import sys
 import threading
 import tkinter as tk
+from datetime import datetime
 from tkinter import messagebox, simpledialog
 
+import ascolto
 import notifiche
+import scarica
+import voce
 from cervello import SEPARATORE_DATI, Assistente, ErroreOllama, carica_config
 
 COLORI = {
@@ -26,6 +32,7 @@ COLORI = {
     "errore": "#f87171",
 }
 CARATTERE = "Segoe UI"
+LIMITE_AVVISI_A_VOCE = 350  # dei resoconti dei compiti si legge l'inizio: il resto è nella finestra
 
 
 def _mescola(colore1, colore2, quota):
@@ -37,21 +44,36 @@ def _mescola(colore1, colore2, quota):
 
 class Finestra:
     def __init__(self, config):
+        self.config = config
         self.nome = config["nome"]
         self.eventi = queue.Queue()
         self.stop = threading.Event()
         self.occupato = True  # finché il modello non è pronto non si può scrivere
+        self.lavoro = "avvio in corso..."  # cosa sta facendo il cervello, per la riga di stato
         self.a_capo = True
         self.etichetta_scritta = False
         self.fase = 0
         self.compiti_da_mostrare = []  # finiti mentre Jarvis stava rispondendo ad altro
         self.assistente = Assistente(config, avvisa=lambda messaggio: self.eventi.put(("avviso", messaggio)),
                                      al_termine=lambda compito: self.eventi.put(("compito", compito)))
+        # Voce e orecchio: lavorano in background e parlano con la finestra attraverso la stessa coda.
+        self.voce = voce.Voce(config, avvisa=lambda messaggio: self.eventi.put(("problema_voce", messaggio)),
+                              al_cambio=lambda parla: self.eventi.put(("parlando", parla)))
+        self.orecchio = self._nuovo_orecchio()
+        self.orecchio_avviato = False
+        self.stato_ascolto = ""
+        self.stato_voce = ""  # per esempio quanto manca a finire di scaricare la voce
+        self.parlando = False
+        self.risposta_a_voce = False  # la risposta in arrivo va letta ad alta voce
+        self.domanda_a_voce = False
+        self.ultima_risposta = ""
+        self.comando_in_attesa = None  # un comando a voce arrivato mentre Jarvis era occupato
+        self.consigliato = False  # il consiglio di usare Python 3.12 si dà una volta sola
 
         self.root = tk.Tk()
         self.root.title(self.nome)
-        self.root.geometry("780x660")
-        self.root.minsize(480, 400)
+        self.root.geometry("780x680")
+        self.root.minsize(480, 420)
         self.root.configure(bg=COLORI["sfondo"])
         self.root.protocol("WM_DELETE_WINDOW", self._chiudi)
         self._costruisci()
@@ -71,7 +93,7 @@ class Finestra:
         self.nucleo = self.reattore.create_oval(10, 10, 18, 18, fill=c["accento"], outline="")
         tk.Label(testata, text=self.nome.upper(), font=(CARATTERE, 15, "bold"),
                  fg=c["accento"], bg=c["sfondo"]).pack(side="left", padx=10)
-        self.stato = tk.Label(testata, text="avvio in corso...", font=(CARATTERE, 10),
+        self.stato = tk.Label(testata, text=self.lavoro, font=(CARATTERE, 10),
                               fg=c["attenuato"], bg=c["sfondo"])
         self.stato.pack(side="right")
 
@@ -84,20 +106,29 @@ class Finestra:
                               highlightbackground=c["bordo"], highlightcolor=c["accento"])
         self.campo.pack(side="left", fill="x", expand=True, ipady=8)
         self.campo.bind("<Return>", lambda _: self._invia())
-        self.campo.bind("<Escape>", lambda _: self.stop.set())
+        self.campo.bind("<Escape>", lambda _: self._ferma())
         self.pulsante = self._bottone(riga, "Invia", self._invia_o_ferma, principale=True)
         self.pulsante.pack(side="left", padx=(8, 0))
 
         comandi = tk.Frame(fondo, bg=c["sfondo"])
         comandi.pack(fill="x", pady=(8, 0))
-        for testo, comando in (("Nuova conversazione", "/nuova"), ("Memoria", "/memoria"), ("Aiuto", "/aiuto")):
+        for testo, comando in (("Nuova conversazione", "/nuova"), ("Memoria", "/memoria"),
+                               ("Compiti", "/compiti"), ("Aiuto", "/aiuto")):
             self._bottone(comandi, testo, lambda comando=comando: self._invia(comando, mostra=False)).pack(
                 side="left", padx=(0, 6))
+
+        interruttori = tk.Frame(fondo, bg=c["sfondo"])
+        interruttori.pack(fill="x", pady=(6, 0))
+        self.microfono = tk.BooleanVar(value=bool(self.config["ascolto"]))
+        self._casella(interruttori, "Microfono", self.microfono, self._cambia_microfono).pack(side="left")
+        self.parla = tk.BooleanVar(value=self.config["parla"] != "mai")
+        self._casella(interruttori, "Voce", self.parla, self._cambia_voce).pack(side="left", padx=(10, 0))
+        self.gioco = tk.BooleanVar(value=False)
+        self._casella(interruttori, "Modalità gioco", self.gioco, self._cambia_gioco).pack(side="left", padx=(10, 0))
         self.ragionamento = tk.BooleanVar(value=False)
-        self.casella = tk.Checkbutton(
-            comandi, text="Ragionamento profondo", variable=self.ragionamento, command=self._cambia_ragionamento,
-            font=(CARATTERE, 10), bg=c["sfondo"], fg=c["attenuato"], selectcolor=c["pannello"],
-            activebackground=c["sfondo"], activeforeground=c["testo"], highlightthickness=0, state="disabled")
+        self.casella = self._casella(interruttori, "Ragionamento profondo", self.ragionamento,
+                                     self._cambia_ragionamento)
+        self.casella.configure(state="disabled")
         self.casella.pack(side="right")
 
         cornice = tk.Frame(self.root, bg=c["bordo"], padx=1, pady=1)
@@ -127,9 +158,15 @@ class Finestra:
         return tk.Button(genitore, text=testo, command=comando, relief="flat", borderwidth=0,
                          cursor="hand2", **colori)
 
+    def _casella(self, genitore, testo, variabile, comando):
+        c = COLORI
+        return tk.Checkbutton(genitore, text=testo, variable=variabile, command=comando, font=(CARATTERE, 10),
+                              bg=c["sfondo"], fg=c["attenuato"], selectcolor=c["pannello"],
+                              activebackground=c["sfondo"], activeforeground=c["testo"], highlightthickness=0)
+
     def _anima(self):
-        """Il "reattore" in alto a sinistra pulsa mentre Jarvis lavora."""
-        if self.occupato:
+        """Il "reattore" in alto a sinistra pulsa mentre Jarvis lavora o parla."""
+        if self.occupato or self.parlando:
             self.fase = (self.fase + 1) % 24
             quota = abs(12 - self.fase) / 12
             colore = _mescola(COLORI["accento"], COLORI["sfondo"], quota * 0.8)
@@ -173,16 +210,45 @@ class Finestra:
             self.assistente.avvia()
         except ErroreOllama as e:
             self.eventi.put(("errore_avvio", str(e)))
-        else:
-            self.eventi.put(("pronto",))
+            return
+        self.eventi.put(("pronto",))
+        if self.config["ascolto"]:
+            self.eventi.put(("avvia_orecchio",))
+        if self.config["parla"] != "mai":
+            self._prepara_voce(saluta=True)
+
+    def _prepara_voce(self, saluta=False, nuova=False):
+        """Carica la voce (la prima volta la scarica) senza bloccare la finestra."""
+        def avanzamento(nome, scaricati, totale):
+            self.eventi.put(("stato_voce", scarica.descrivi_avanzamento(nome, scaricati, totale)))
+
+        pronta = not self.voce.prepara(avanzamento)  # se non va, lo dice la voce stessa ("problema_voce")
+        if pronta and saluta:
+            self.voce.di(self._saluto())
+        elif pronta and nuova:
+            self.voce.di(f"Ecco la mia nuova voce{self._t()}.")
+        self.eventi.put(("stato_voce", ""))
+
+    def _t(self):
+        titolo = self.config["come_chiamarmi"]
+        return f", {titolo}" if titolo else ""
+
+    def _saluto(self):
+        ora = datetime.now().hour
+        saluto = "Buongiorno" if 5 <= ora < 13 else "Buon pomeriggio" if ora < 18 else "Buonasera"
+        return f"{saluto}{self._t()}. Tutti i sistemi sono operativi."
 
     def _invia_o_ferma(self):
         if self.occupato:
-            self.stop.set()
+            self._ferma()
         else:
             self._invia()
 
-    def _invia(self, testo=None, mostra=True):
+    def _ferma(self):
+        self.stop.set()
+        self.voce.zitto()
+
+    def _invia(self, testo=None, mostra=True, a_voce=False):
         if self.occupato:
             return
         if testo is None:
@@ -190,17 +256,31 @@ class Finestra:
             self.campo.delete(0, "end")
         if not testo:
             return
-        if testo.lower() in ("/esci", "esci"):
+        minuscolo = testo.lower()
+        if minuscolo in ("/esci", "esci"):
             self._chiudi()
             return
-        if testo.lower() == "/chiave":
+        if minuscolo == "/chiave":
             self._chiedi_chiave()
             return
+        if minuscolo == "/ascolto":
+            self.microfono.set(not self.microfono.get())
+            self._cambia_microfono()
+            return
+        if minuscolo == "/voce" or minuscolo.startswith("/voce "):
+            self._comando_voce(testo[6:].strip().lower())
+            return
         if mostra:
-            self._messaggio("Tu", testo, "tu")
+            self._messaggio("Tu (a voce)" if a_voce else "Tu", testo, "tu")
         self.etichetta_scritta = False
+        self.domanda_a_voce = a_voce
+        self.ultima_risposta = ""
+        parla = self.config["parla"]
+        self.risposta_a_voce = not testo.startswith("/") and (parla == "sempre" or (parla == "a_voce" and a_voce))
+        if self.risposta_a_voce:
+            self.voce.inizia()
         self._occupa(True)
-        threading.Thread(target=self._lavora, args=(testo,), daemon=True).start()
+        threading.Thread(target=self._lavora, args=(testo, a_voce), daemon=True).start()
 
     def _chiedi_chiave(self):
         chiave = simpledialog.askstring(
@@ -210,9 +290,9 @@ class Finestra:
             self._riga(self.assistente.imposta_chiave(chiave), "info")
             self.casella.configure(state="normal" if self.assistente.supporta_ragionamento else "disabled")
 
-    def _lavora(self, testo):
+    def _lavora(self, testo, a_voce):
         try:
-            for evento in self.assistente.gestisci(testo, self.stop):
+            for evento in self.assistente.gestisci(testo, self.stop, a_voce=a_voce):
                 self.eventi.put(evento)
         except ErroreOllama as e:
             self.eventi.put(("errore", str(e)))
@@ -225,18 +305,24 @@ class Finestra:
         self.occupato = occupato
         if occupato:
             self.stop.clear()
+        self.lavoro = "sto elaborando..." if occupato else "pronto"
         self.pulsante.configure(text="Ferma" if occupato else "Invia")
         self._aggiorna_stato()
 
     def _aggiorna_stato(self):
-        if self.occupato:
-            testo = "sto elaborando..."
-        else:
-            testo = "pronto"
+        parti = [self.lavoro]
+        if self.parlando:
+            parti.append("sto parlando")
+        elif self.stato_voce:
+            parti.append(self.stato_voce)
+        elif self.stato_ascolto:
+            parti.append(self.stato_ascolto)
+        if self.assistente.modalita_gioco:
+            parti.append("modalità gioco")
         attivi = len(self.assistente.compiti_attivi())
         if attivi:
-            testo += f" · {attivi} {'compito' if attivi == 1 else 'compiti'} in background"
-        self.stato.configure(text=testo)
+            parti.append(f"{attivi} {'compito' if attivi == 1 else 'compiti'} in background")
+        self.stato.configure(text=" · ".join(parti))
 
     def _mostra_compito(self, compito):
         esito = {"completato": "completato", "errore": "non riuscito"}.get(compito.stato, compito.stato)
@@ -247,10 +333,109 @@ class Finestra:
         self._scrivi(compito.risultato + "\n")
         self.root.bell()
         notifiche.mostra(f"{self.nome}: compito {compito.numero} {esito}", compito.risultato)
+        if self.config["parla"] != "mai":
+            if compito.stato == "completato":
+                annuncio = f"Ho terminato il compito {compito.numero}{self._t()}. {compito.risultato}"
+            else:
+                annuncio = f"Non sono riuscito a completare il compito {compito.numero}{self._t()}."
+            self.voce.di(annuncio, limite=LIMITE_AVVISI_A_VOCE)
         self._aggiorna_stato()
+
+    # --- Voce e ascolto ---
+
+    def _comando_vocale(self, testo):
+        if ascolto.e_stop(testo):
+            self.voce.zitto()
+            if self.occupato:
+                self.stop.set()
+            return
+        self.voce.zitto()
+        if not testo:  # ha detto solo "Jarvis": risponde e aspetta la richiesta
+            lei = self.config["dai_del"] != "tu"
+            risposte = ["Sì{t}?", "Mi dica{t}." if lei else "Dimmi{t}.", "Eccomi{t}.", "Sono qui{t}."]
+            if self.config["parla"] != "mai":
+                self.voce.di(random.choice(risposte).format(t=self._t()))
+            self.orecchio.attendi_comando()
+            self.stato_ascolto = f"{'la' if lei else 'ti'} ascolto..."
+            self._aggiorna_stato()
+            self.root.after(10000, self._fine_attesa)
+            return
+        self._fine_attesa()
+        if self.occupato:  # interrompe la risposta in corso: il nuovo comando parte appena possibile
+            self.comando_in_attesa = testo
+            self.stop.set()
+            return
+        self._invia(testo, a_voce=True)
+
+    def _fine_attesa(self):
+        if self.stato_ascolto.endswith("ascolto..."):
+            self.stato_ascolto = "in ascolto" if self.orecchio.pronto else ""
+            self._aggiorna_stato()
+
+    def _nuovo_orecchio(self):
+        return ascolto.Ascolto(self.config, al_comando=lambda testo: self.eventi.put(("comando_vocale", testo)),
+                               al_stato=lambda testo: self.eventi.put(("stato_ascolto", testo)),
+                               parlando=lambda: self.voce.sta_parlando)
+
+    def _avvia_orecchio(self):
+        if self.orecchio.errore:  # l'ultima volta non è partito: ci riprova da capo
+            self.orecchio = self._nuovo_orecchio()
+            self.orecchio_avviato = False
+        if not self.orecchio_avviato:
+            self.orecchio_avviato = True
+            self.orecchio.avvia()
+        else:
+            self.orecchio.pausa(False)
+
+    def _cambia_microfono(self):
+        acceso = self.microfono.get()
+        avviso = self.assistente.salva_impostazione("ascolto", acceso)
+        if acceso:
+            self._avvia_orecchio()
+        else:
+            self.orecchio.pausa(True)
+        self._riga(("Microfono acceso: chiamami dicendo \"" + self.nome + "\"." if acceso else
+                    "Microfono spento: non ascolto più.") + avviso, "info")
+
+    def _cambia_voce(self):
+        acceso = self.parla.get()
+        avviso = self.assistente.salva_impostazione("parla", "sempre" if acceso else "mai")
+        if acceso:
+            threading.Thread(target=self._prepara_voce, daemon=True).start()
+        else:
+            self.voce.zitto()
+        self._riga(("Voce attiva." if acceso else "Voce spenta: rispondo solo per iscritto.") + avviso, "info")
+
+    def _comando_voce(self, nome):
+        if not nome:
+            self.parla.set(not self.parla.get())
+            self._cambia_voce()
+            return
+        if nome not in voce.VOCI:
+            elenco = "\n".join(f"- {n}: {v['descrizione']}" for n, v in voce.VOCI.items())
+            self._riga(f"Le voci disponibili (per esempio /voce nicola):\n{elenco}", "info")
+            return
+        avviso = self.assistente.salva_impostazione("voce", nome)
+        self.voce.zitto()
+        self.parla.set(True)
+        if self.config["parla"] == "mai":
+            self.assistente.salva_impostazione("parla", "sempre")
+        self._riga(f"Cambio voce: {voce.VOCI[nome]['descrizione']}.{avviso}", "info")
+        threading.Thread(target=self._prepara_voce, kwargs={"nuova": True}, daemon=True).start()
+
+    def _cambia_gioco(self):
+        attiva = self.gioco.get()
+
+        def cambia():
+            self.eventi.put(("info", self.assistente.imposta_modalita_gioco(attiva)))
+            self.eventi.put(("stato_voce", self.stato_voce))  # ridisegna la riga di stato
+
+        threading.Thread(target=cambia, daemon=True).start()
 
     def _cambia_ragionamento(self):
         self.assistente.ragionamento = self.ragionamento.get()
+
+    # --- Eventi (arrivano dagli altri thread attraverso la coda) ---
 
     def _leggi_eventi(self):
         try:
@@ -269,10 +454,14 @@ class Finestra:
                 self.chat.mark_gravity("risposta", "left")
                 self.etichetta_scritta = True
             self._scrivi(evento[1], "grassetto" if evento[2] else ())
+            self.ultima_risposta += evento[1]
+            if self.risposta_a_voce:
+                self.voce.aggiungi(evento[1])
         elif tipo == "info":
             self._riga(evento[1], "info")
         elif tipo == "pensiero":
-            self.stato.configure(text="sto ragionando...")
+            self.lavoro = "sto ragionando..."
+            self._aggiorna_stato()
             self._riga("Sto ragionando...", "info")
         elif tipo == "ritira":
             if self.etichetta_scritta:  # il modello aveva scritto il suo ragionamento: si cancella
@@ -280,28 +469,44 @@ class Finestra:
                 self.chat.delete("risposta", "end-1c")
                 self.chat.configure(state="disabled")
                 self.a_capo = True
+            self.ultima_risposta = ""
+            if self.risposta_a_voce:
+                self.voce.zitto()
+                self.voce.inizia()
         elif tipo == "pulisci":
             self._pulisci()
         elif tipo == "errore":
             self._riga(evento[1], "errore")
+            if self.risposta_a_voce:
+                self.voce.di(f"Mi dispiace{self._t()}, c'è un problema: i dettagli sono nella finestra.")
         elif tipo == "avviso":
             self._riga(f"⏰ {evento[1]}", "avviso")
             self.root.bell()
             notifiche.mostra(self.nome, evento[1])
-            self._in_primo_piano()
+            if self.config["parla"] != "mai":
+                self.voce.di(self._avviso_a_voce(evento[1]))
+            else:
+                self._in_primo_piano()
         elif tipo == "compito":
             if self.occupato:
                 self.compiti_da_mostrare.append(evento[1])
             else:
                 self._mostra_compito(evento[1])
         elif tipo == "fatto":
+            if self.risposta_a_voce:
+                self.voce.finisci()
+            # Se Jarvis ha fatto una domanda a voce, la risposta dell'utente non ha bisogno del nome.
+            if self.domanda_a_voce and self.ultima_risposta.rstrip().endswith("?"):
+                self.orecchio.attendi_comando()
             self._occupa(False)
             for compito in self.compiti_da_mostrare:
                 self._mostra_compito(compito)
             self.compiti_da_mostrare.clear()
             self.ragionamento.set(self.assistente.ragionamento)
+            self.gioco.set(self.assistente.modalita_gioco)
             if not self.a_capo:
                 self._scrivi("\n")
+            self._comando_rimasto()
         elif tipo == "pronto":
             self._mostra_cronologia()
             self._riga(self.assistente.stato(), "info")
@@ -310,12 +515,58 @@ class Finestra:
                 self.ragionamento.set(self.assistente.ragionamento)
             self._occupa(False)
             self.campo.focus_set()
+            self._comando_rimasto()
+        elif tipo == "avvia_orecchio":
+            self._avvia_orecchio()
+        elif tipo == "comando_vocale":
+            self._comando_vocale(evento[1])
+        elif tipo == "stato_ascolto":
+            testo = evento[1]
+            if testo.startswith("ascolto non disponibile"):
+                self._riga(f"Non posso ascoltare: {testo.partition(': ')[2]}{self._consiglio_python()}", "info")
+                self.microfono.set(False)
+                testo = ""
+            elif testo == "in ascolto" and not self.assistente.voce_attiva:
+                self.assistente.voce_attiva = True
+                self._riga(f"Ti ascolto: chiamami dicendo \"{self.nome}\" (per esempio \"{self.nome}, che ore "
+                           f"sono?\"). Per interrompermi: \"{self.nome}, basta\".", "info")
+            self.stato_ascolto = testo
+            self._aggiorna_stato()
+        elif tipo == "stato_voce":
+            self.stato_voce = evento[1]
+            self._aggiorna_stato()
+        elif tipo == "problema_voce":
+            self._riga(evento[1] + self._consiglio_python(), "info")
+        elif tipo == "parlando":
+            self.parlando = evento[1]
+            self._aggiorna_stato()
         elif tipo == "errore_avvio":
             self._riga(f"{evento[1]}\n\nSistema il problema e riapri {self.nome}.", "errore")
-            self.stato.configure(text="non disponibile")
+            self.lavoro = "non disponibile"
+            self._aggiorna_stato()
             self.occupato = False  # ferma l'animazione; casella di testo e pulsante restano disattivati
             self.pulsante.configure(state="disabled")
             self.campo.configure(state="disabled")
+
+    def _comando_rimasto(self):
+        if self.comando_in_attesa and not self.occupato:
+            testo, self.comando_in_attesa = self.comando_in_attesa, None
+            self._invia(testo, a_voce=True)
+
+    def _avviso_a_voce(self, messaggio):
+        promemoria = messaggio.removeprefix("Timer: ").strip()
+        if promemoria == "tempo scaduto!":
+            return f"Il tempo è scaduto{self._t()}."
+        if promemoria != messaggio:
+            return f"Il timer è scaduto{self._t()}: {promemoria}"
+        return messaggio
+
+    def _consiglio_python(self):
+        if sys.version_info >= (3, 13) and not self.consigliato:
+            self.consigliato = True
+            return ("\nLa voce ha bisogno di Python 3.12: avvia Jarvis con  py -3.12 jarvis.py  "
+                    "(le librerie si installano con  py -3.12 -m pip install -r requisiti_voce.txt).")
+        return ""
 
     def _mostra_cronologia(self):
         for messaggio in self.assistente.cronologia:
@@ -332,6 +583,8 @@ class Finestra:
 
     def _chiudi(self):
         self.stop.set()
+        self.voce.zitto()
+        self.orecchio.chiudi()
         self.root.withdraw()
         self.assistente.chiudi()
         self.root.destroy()

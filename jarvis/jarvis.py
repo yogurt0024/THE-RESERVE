@@ -1,12 +1,15 @@
 """Jarvis: assistente personale che gira sul tuo PC grazie a Ollama.
 
-Avvio:  python jarvis.py           apre la finestra grafica
-        python jarvis.py --testo   resta nel Prompt dei comandi
-Le impostazioni (nome, modello, città, ...) sono in config.json.
+Avvio:  py -3.12 jarvis.py           apre la finestra grafica, con voce e ascolto
+        py -3.12 jarvis.py --testo   resta nel Prompt dei comandi (senza voce)
+Le impostazioni (nome, modello, città, voce, ...) sono in config.json.
 """
 
 import getpass
+import os
+import subprocess
 import sys
+from pathlib import Path
 
 import notifiche
 from cervello import Assistente, ErroreOllama, carica_config
@@ -93,10 +96,37 @@ def terminale(config):
     assistente.chiudi()
 
 
+def riparti_con_python_312():
+    """La voce funziona con Python 3.12. Se Jarvis è partito con una versione più nuova e sul PC c'è il 3.12
+    con le librerie della voce, riparte con quello. Restituisce True se è ripartito."""
+    if sys.platform != "win32" or sys.version_info < (3, 13) or os.environ.get("JARVIS_PYTHON_312"):
+        return False
+    try:
+        prova = subprocess.run(["py", "-3.12", "-c", "import numpy, sounddevice"], capture_output=True,
+                               timeout=60, creationflags=subprocess.CREATE_NO_WINDOW)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if prova.returncode != 0:
+        return False
+    senza_console = Path(sys.executable).name.lower().startswith("pythonw")  # aperto con doppio clic
+    comando = ["pyw" if senza_console else "py", "-3.12", str(Path(__file__).resolve()), *sys.argv[1:]]
+    ambiente = dict(os.environ, JARVIS_PYTHON_312="1")
+    if senza_console:
+        subprocess.Popen(comando, env=ambiente)
+    else:
+        try:
+            subprocess.call(comando, env=ambiente)
+        except KeyboardInterrupt:
+            pass
+    return True
+
+
 def main():
     if sys.stdout is not None and hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if "--testo" not in sys.argv[1:]:
+        if riparti_con_python_312():
+            return
         try:
             import finestra
         except ImportError:

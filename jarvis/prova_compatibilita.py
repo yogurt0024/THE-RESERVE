@@ -3,7 +3,7 @@
 Il Controllo intelligente delle app di Windows può bloccare alcune librerie. Questo programma
 le installa una alla volta, prova a usarle e scrive un riepilogo in dati/compatibilita.txt.
 
-Uso:  python prova_compatibilita.py   (ci vogliono 5-15 minuti e circa 1 GB di download)
+Uso:  py -3.12 prova_compatibilita.py   (ci vogliono 5-15 minuti e circa 1 GB di download)
 """
 
 import json
@@ -22,10 +22,14 @@ PROVE = [
     ("anthropic", "import anthropic; print(anthropic.__version__)", "cervello avanzato (Claude)"),
     ("sounddevice", "import sounddevice as s; print('microfono:', s.query_devices(kind='input')['name'])",
      "microfono e altoparlanti"),
-    ("onnx-asr[cpu,hub]", "import onnx_asr, onnxruntime; print('onnxruntime', onnxruntime.__version__)",
+    ("onnx-asr[cpu]", "import onnx_asr, onnxruntime; print('onnxruntime', onnxruntime.__version__)",
      "capire la voce"),
-    ("openwakeword", "import openwakeword; print('ok')", "parola di attivazione \"Jarvis\""),
-    ("piper-tts", "import piper; print('ok')", "voce di Jarvis"),
+    ("piper-tts", "from piper.phonemize_espeak import EspeakPhonemizer as E; print(E().phonemize('it', 'ciao')[0])",
+     "voce Riccardo (sul PC)"),
+    ("kokoro-onnx", "import ctypes, espeakng_loader, kokoro_onnx; "
+                    "ctypes.cdll.LoadLibrary(espeakng_loader.get_library_path()); print('ok')", "voce Nicola (sul PC)"),
+    ("edge-tts soundfile", "import edge_tts, soundfile; print('libsndfile', soundfile.__libsndfile_version__)",
+     "voci Diego e Giuseppe (via internet)"),
     ("opencv-python", "import cv2; print(cv2.__version__)", "webcam"),
 ]
 # Come si presenta un blocco del Controllo intelligente delle app (WinError 4551).
@@ -49,7 +53,7 @@ def ultima_riga(testo):
 
 
 def prova(pacchetto, codice):
-    installa = comando([sys.executable, "-m", "pip", "install", "--upgrade", pacchetto], 1800)
+    installa = comando([sys.executable, "-m", "pip", "install", "--upgrade", *pacchetto.split()], 1800)
     if installa.returncode != 0:
         return "NON INSTALLABILE", ultima_riga(installa.stderr or installa.stdout)
     uso = comando([sys.executable, "-c", codice], 300)

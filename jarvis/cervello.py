@@ -7,6 +7,7 @@ import json
 import queue
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime
@@ -31,6 +32,14 @@ CONFIG_PREDEFINITA = {
     "ragionamento": False,
     "cervello": "locale",
     "compiti_in_background": True,
+    "ascolto": True,
+    "parla": "sempre",
+    "voce": "riccardo",
+    "effetto_voce": 0.6,
+    "velocita_voce": 1.0,
+    "limite_voce": 400,
+    "modello_ascolto": "parakeet",
+    "microfono": "",
     "modello_claude": "claude-opus-5-5",
     "sforzo_claude": "medium",
     "mostra_costi": True,
@@ -70,10 +79,14 @@ AIUTO = """Comandi:
 /costi — quanto hai speso con Claude
 /compiti — i compiti in background e a che punto sono
 /annulla <numero> — ferma un compito in background
+/gioco — modalità gioco: libera la scheda video (di nuovo /gioco per uscire)
+/ascolto — accende o spegne il microfono (solo nella finestra)
+/voce [nome] — accende o spegne la voce, oppure la cambia (solo nella finestra)
 /nuova — nuova conversazione
 /esci — chiude
 Puoi anche chiedere normalmente, per esempio "che tempo fa a Cagliari?", "ricordati che..." oppure
-"in background cerca i migliori modpack per giocare in due\""""
+"in background cerca i migliori modpack per giocare in due". A voce: "Jarvis, che ore sono?",
+"Jarvis, basta" per interromperlo, "Jarvis, modalità gioco\""""
 
 # Ollama gira sullo stesso PC: niente proxy di sistema in mezzo.
 _connessione = urllib.request.build_opener(urllib.request.ProxyHandler({}))
@@ -91,6 +104,14 @@ STRUMENTO_AVANZATO = {"type": "function", "function": {
     "parameters": {"type": "object", "properties": {
         "motivo": {"type": "string", "description": "Perché serve il cervello avanzato"}}, "required": []},
 }}
+
+
+ISTRUZIONI_VOCE = (
+    "L'utente ti sta parlando a voce e sentirà la tua risposta letta ad alta voce: rispondi come in una "
+    "conversazione, con una-tre frasi brevi, senza elenchi, tabelle, simboli o link. Se serve di più, dai prima "
+    "l'essenziale e offri di approfondire. La richiesta è stata trascritta dal microfono e può contenere parole "
+    "sbagliate: interpreta il senso più probabile."
+)
 
 
 ISTRUZIONI_COMPITO = (
@@ -278,7 +299,7 @@ class PulitoreMarkdown:
         return uniti
 
 
-def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_avanzato=False):
+def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_avanzato=False, voce=False):
     """Le istruzioni che il modello riceve a ogni domanda (usate anche per creare il dataset di addestramento)."""
     adesso = adesso or datetime.now()
     nome, titolo = config["nome"], config["come_chiamarmi"]
@@ -344,6 +365,8 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
     if not config["internet"]:
         righe.append("- Non sei collegato a internet.")
     righe += [
+        "- Senti l'utente quando ti chiama per nome e gli rispondi a voce. Non puoi vedere lo schermo, né leggere "
+        "o modificare file." if voce else
         "- Non puoi vedere lo schermo, sentire la voce dell'utente, né leggere o modificare file.",
         "- Le tue conoscenze generali si fermano al tuo addestramento: per i fatti recenti servono gli strumenti.",
     ]
@@ -394,6 +417,14 @@ class Assistente:
         self._non_chiamarmi_frase = re.compile(r"\bnon\s+chiamarmi\s+(?:più\s+)?", re.IGNORECASE)
         self._dai_del_frase = re.compile(r"\bdammi\s+(?:pure\s+)?del\s+(tu|lei)\b", re.IGNORECASE)
         self._in_background_frase = re.compile(r"\bin (?:background|sottofondo)\b", re.IGNORECASE)
+        self._gioco_frase = re.compile(r"\bmodalit[àa] (?:di )?gioco\b|\bho finito di giocare\b",
+                                      re.IGNORECASE)
+        self._fine_gioco_frase = re.compile(
+            r"\b(?:disattiva|spegni|esci|termina|chiudi|togli|fine|basta|ferma|stop|finita|finisci|finito)\b",
+            re.IGNORECASE)
+        self.voce_attiva = False  # la finestra lo mette a True quando Jarvis può sentire e parlare
+        self.modalita_gioco = False
+        self._a_voce = False  # la domanda di adesso è arrivata dal microfono
 
     # --- Ollama ---
 
@@ -417,13 +448,30 @@ class Assistente:
 
     def _carica(self, modello, tieni_in_memoria=None, timeout=300):
         """Senza messaggi, Ollama si limita a caricare il modello (o a scaricarlo con keep_alive 0)."""
-        dati = {"model": modello, "messages": [], "stream": False, "options": {"num_ctx": CONTESTO}}
+        dati = {"model": modello, "messages": [], "stream": False, "options": self._opzioni(modello)}
         if tieni_in_memoria is not None:
             dati["keep_alive"] = tieni_in_memoria
         self._richiesta("/api/chat", dati, timeout).close()
 
+    def _opzioni(self, modello):
+        opzioni = {"num_ctx": CONTESTO}
+        # Con un gioco aperto, o con il cervello grande al lavoro su un compito, la scheda video è occupata:
+        # il cervello veloce lavora sul processore, così risponde subito invece di aspettare il suo turno.
+        grande_al_lavoro = self.modello_grande and any(c.stato == "in corso" for c in self.compiti)
+        if modello != self.modello_grande and (self.modalita_gioco or grande_al_lavoro):
+            opzioni["num_gpu"] = 0
+        return opzioni
+
+    def _libera_memoria(self):
+        """Toglie i modelli dalla scheda video (Ollama li ricarica da solo quando servono)."""
+        for modello in self.capacita:
+            try:
+                self._carica(modello, tieni_in_memoria=0, timeout=5)
+            except ErroreOllama:
+                pass
+
     def _modello_attuale(self):
-        if self.ragionamento and self.modello_grande:
+        if self.ragionamento and self.modello_grande and not self.modalita_gioco:
             return self.modello_grande
         return self.modello
 
@@ -436,7 +484,7 @@ class Assistente:
         modo = self.config["cervello"]
         if modo == "ibrido" and self.claude.pronto:
             return "claude"
-        if modo == "locale" and self.modello_grande:
+        if modo == "locale" and self.modello_grande and not self.modalita_gioco:
             return "grande"
         return None
 
@@ -483,11 +531,7 @@ class Assistente:
                 del self.cronologia[:-self.limite]
                 self._salva_conversazione()
         # Libera la memoria della scheda video, così resta tutta per i giochi.
-        for modello in self.capacita:
-            try:
-                self._carica(modello, tieni_in_memoria=0, timeout=5)
-            except ErroreOllama:
-                pass
+        self._libera_memoria()
 
     def stato(self):
         righe = [f"{self.nome} è pronto (modello {self.modello})."]
@@ -544,12 +588,14 @@ class Assistente:
     def _salva_conversazione(self):
         _scrivi_json(FILE_CONVERSAZIONE, {"messaggi": self.cronologia})
 
-    def _prompt_di_sistema(self, modello):
+    def _prompt_di_sistema(self, modello, a_voce=False):
         if modello.startswith("claude"):
-            return prompt_di_sistema(self.config, modello, {"tools"}, self.fatti)
-        avanzato = self._cervello_avanzato() is not None and modello != self.modello_grande
-        return prompt_di_sistema(self.config, modello, self.capacita.get(modello, ()), self.fatti,
-                                 cervello_avanzato=avanzato)
+            sistema = prompt_di_sistema(self.config, modello, {"tools"}, self.fatti, voce=self.voce_attiva)
+        else:
+            avanzato = self._cervello_avanzato() is not None and modello != self.modello_grande
+            sistema = prompt_di_sistema(self.config, modello, self.capacita.get(modello, ()), self.fatti,
+                                        cervello_avanzato=avanzato, voce=self.voce_attiva)
+        return sistema + "\n\n" + ISTRUZIONI_VOCE if a_voce else sistema
 
     def imposta_chiave(self, chiave):
         """Salva la chiave API di Claude (la chiedono la finestra o la modalità testo, senza mostrarla)."""
@@ -559,8 +605,11 @@ class Assistente:
 
     # --- Conversazione ---
 
-    def gestisci(self, testo, stop=None):
-        """Risponde a un messaggio dell'utente (domanda o /comando). `stop` è un threading.Event."""
+    def gestisci(self, testo, stop=None, a_voce=False):
+        """Risponde a un messaggio dell'utente (domanda o /comando). `stop` è un threading.Event.
+
+        `a_voce` vuol dire che la richiesta arriva dal microfono: la risposta sarà breve, da ascoltare.
+        """
         testo = testo.strip()
         if testo.startswith("/"):
             domanda = yield from self._comando(testo)
@@ -575,8 +624,34 @@ class Assistente:
         cambio = self._cambia_modo_di_parlare(testo)
         if cambio:
             yield ("info", cambio)
+        if self._gioco_frase.search(testo) and not testo.endswith("?"):
+            fine = bool(self._fine_gioco_frase.search(testo)) or "finito di giocare" in testo.lower()
+            yield from self._risposta_fissa(testo, self.imposta_modalita_gioco(not fine))
+            return
         in_background = bool(self._in_background_frase.search(testo)) and not testo.endswith("?")
-        yield from self._chiedi(testo, stop, in_background=in_background)
+        yield from self._chiedi(testo, stop, in_background=in_background, a_voce=a_voce)
+
+    def _risposta_fissa(self, domanda, risposta):
+        """Una risposta che non serve chiedere al modello (per esempio la conferma della modalità gioco)."""
+        self.cronologia += [{"role": "user", "content": domanda}, {"role": "assistant", "content": risposta}]
+        del self.cronologia[:-self.limite]
+        self._salva_conversazione()
+        yield ("testo", risposta, False)
+
+    def imposta_modalita_gioco(self, attiva):
+        titolo = self.config["come_chiamarmi"]
+        t = f", {titolo}" if titolo else ""
+        lei = self.config["dai_del"] != "tu"
+        if attiva == self.modalita_gioco:
+            return f"La modalità gioco è già {'attiva' if attiva else 'spenta'}{t}."
+        self.modalita_gioco = attiva
+        if attiva:
+            self._libera_memoria()
+            return (f"Modalità gioco attiva{t}: la scheda video è tutta {'sua' if lei else 'tua'}. Rispondo con il "
+                    "processore e i compiti in background aspettano la fine della partita. Buon divertimento.")
+        attesa = sum(1 for c in self.compiti if c.stato == "in coda")
+        compiti = f" Riprendo i compiti in attesa ({attesa})." if attesa else ""
+        return f"Modalità gioco terminata{t}: torno a pieno regime.{compiti}"
 
     def _cambia_modo_di_parlare(self, testo):
         """Riconosce "chiamami capo", "non chiamarmi più signore", "dammi del tu"."""
@@ -598,17 +673,17 @@ class Assistente:
         return None
 
     def _imposta_appellativo(self, appellativo):
-        avviso = self._salva_impostazione("come_chiamarmi", appellativo)
+        avviso = self.salva_impostazione("come_chiamarmi", appellativo)
         tu = self.config["dai_del"] == "tu"
         if not appellativo:
             return "D'ora in poi non userò appellativi." + avviso
         return f'D\'ora in poi {"ti" if tu else "la"} chiamerò "{appellativo}".' + avviso
 
     def _imposta_dai_del(self, forma):
-        avviso = self._salva_impostazione("dai_del", forma)
+        avviso = self.salva_impostazione("dai_del", forma)
         return ("D'accordo: da ora ti do del tu." if forma == "tu" else "Come desidera: da ora le do del lei.") + avviso
 
-    def _salva_impostazione(self, chiave, valore):
+    def salva_impostazione(self, chiave, valore):
         """Cambia un'impostazione subito e la scrive in config.json, così resta anche alla prossima apertura."""
         self.config[chiave] = valore
         try:
@@ -668,7 +743,7 @@ class Assistente:
                     yield ("info", "Scrivi /cervello locale (solo sul PC), /cervello ibrido (Claude per le cose "
                                    "difficili) oppure /cervello claude (sempre Claude).")
                 else:
-                    avviso = self._salva_impostazione("cervello", argomento)
+                    avviso = self.salva_impostazione("cervello", argomento)
                     self._aggiorna_ragionamento()
                     spiegazione = {"locale": "uso solo i modelli sul PC: tutto gratis e privato.",
                                    "ibrido": "uso il modello sul PC e Claude per le cose difficili.",
@@ -676,6 +751,11 @@ class Assistente:
                     problema = "" if self.claude.pronto or argomento == "locale" else \
                         f" Però Claude non è disponibile: {self.claude.problema}."
                     yield ("info", f"Cervello {argomento}: {spiegazione}{problema}{avviso}")
+            elif nome == "gioco":
+                yield ("info", self.imposta_modalita_gioco(not self.modalita_gioco))
+            elif nome in ("voce", "ascolto"):
+                yield ("info", "La voce e l'ascolto funzionano nella finestra di Jarvis (avviala con py -3.12 "
+                               "jarvis.py).")
             elif nome == "compiti":
                 if not self.compiti:
                     yield ("info", "Nessun compito in background. Per affidarmene uno: \"in background ...\"")
@@ -744,7 +824,8 @@ class Assistente:
             return f"Ho dimenticato: {fatto}"
         return "Scrivi il numero del ricordo da cancellare (lo vedi con /memoria), oppure /dimentica tutto."
 
-    def _chiedi(self, domanda, stop, con_strumenti=True, in_background=False):
+    def _chiedi(self, domanda, stop, con_strumenti=True, in_background=False, a_voce=False):
+        self._a_voce = a_voce
         with self._lucchetto:
             self.cronologia += self._risultati_da_aggiungere
             self._risultati_da_aggiungere.clear()
@@ -776,7 +857,7 @@ class Assistente:
     def _con_ollama(self, pulitore, risposta, stop, con_strumenti, modello=None):
         modello = modello or self._modello_attuale()
         avanzato = None if modello == self.modello_grande else self._cervello_avanzato()
-        messaggi = [{"role": "system", "content": self._prompt_di_sistema(modello)}] + self.cronologia
+        messaggi = [{"role": "system", "content": self._prompt_di_sistema(modello, self._a_voce)}] + self.cronologia
         passa = yield from self._ciclo(modello, messaggi, pulitore, risposta, stop, con_strumenti, avanzato,
                                        pensa=self.ragionamento)
         if not passa:
@@ -798,7 +879,7 @@ class Assistente:
         """
         capacita = self.capacita.get(modello, set())
         for giro in range(GIRI_STRUMENTI + 1):
-            dati = {"model": modello, "messages": messaggi, "stream": True, "options": {"num_ctx": CONTESTO}}
+            dati = {"model": modello, "messages": messaggi, "stream": True, "options": self._opzioni(modello)}
             if "thinking" in capacita:
                 dati["think"] = pensa or modello in self.pensa_sempre
             if con_strumenti and "tools" in capacita and giro < GIRI_STRUMENTI:
@@ -836,7 +917,9 @@ class Assistente:
         yield from self._emetti(pulitore.aggiungi(f"Me ne occupo{t}: {avviso} appena ho finito."), risposta)
         cervello = self.modello_grande or self.modello
         attesa = "" if len(self.compiti_attivi()) <= 1 else f", dopo {len(self.compiti_attivi()) - 1} in coda"
-        yield ("info", f"Compito {compito.numero} affidato al cervello {cervello}{attesa}. /compiti per vederlo.")
+        gioco = " Lo inizio quando finisce la modalità gioco." if self.modalita_gioco else ""
+        yield ("info", f"Compito {compito.numero} affidato al cervello {cervello}{attesa}. /compiti per vederlo."
+                       f"{gioco}")
 
     def avvia_compito(self, descrizione, contesto=()):
         with self._lucchetto:
@@ -855,6 +938,8 @@ class Assistente:
         # Un compito alla volta: il cervello grande usa quasi tutta la memoria del PC.
         while True:
             compito = self._coda_compiti.get()
+            while self.modalita_gioco and compito.stato == "in coda":
+                time.sleep(1)  # il cervello grande aspetta la fine della partita
             if compito.stato != "in coda":
                 continue
             compito.stato = "in corso"
@@ -891,7 +976,7 @@ class Assistente:
         return "".join(risposta).strip()
 
     def _con_claude(self, pulitore, risposta, stop, con_strumenti):
-        sistema = self._prompt_di_sistema(self.claude.modello)
+        sistema = self._prompt_di_sistema(self.claude.modello, self._a_voce)
         schemi = strumenti.schemi(self.config) if con_strumenti else None
         try:
             for evento in self.claude.rispondi(sistema, self.cronologia, schemi, self._esegui, stop):
