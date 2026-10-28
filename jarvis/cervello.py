@@ -24,10 +24,10 @@ CONFIG_PREDEFINITA = {
     "come_chiamarmi": "",
     "dai_del": "lei",
     "citta": "",
-    "modello": "qwen3:4b-instruct",
-    "modello_ragionamento": "qwen3:4b",
+    "modello": "qwen3.5:4b",
+    "modello_grande": "qwen3.6:35b-a3b",
     "ragionamento": False,
-    "cervello": "ibrido",
+    "cervello": "locale",
     "modello_claude": "claude-opus-5-5",
     "sforzo_claude": "medium",
     "mostra_costi": True,
@@ -62,7 +62,7 @@ AIUTO = """Comandi:
 /memoria — mostra cosa ricordo
 /dimentica <numero> — cancella un ricordo (/dimentica tutto li cancella tutti)
 /pensa — attiva o disattiva il ragionamento profondo
-/cervello locale, ibrido o claude — quale cervello usare
+/cervello locale, ibrido o claude — locale: tutto sul PC; ibrido: Claude per le cose difficili
 /chiave — inserisci la chiave API di Claude
 /costi — quanto hai speso con Claude
 /nuova — nuova conversazione
@@ -73,11 +73,11 @@ Puoi anche chiedere normalmente, per esempio "che tempo fa a Cagliari?" o "ricor
 _connessione = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 
-# Strumento speciale del modello locale: passa la domanda a Claude.
+# Strumento speciale del modello veloce: passa la domanda al cervello avanzato (il modello grande o Claude).
 STRUMENTO_AVANZATO = {"type": "function", "function": {
     "name": "chiedi_al_cervello_avanzato",
-    "description": "Passa la domanda a Claude, un'intelligenza artificiale molto più potente di te, che risponderà "
-                   "direttamente all'utente. Usalo per domande difficili, ragionamenti lunghi, problemi di "
+    "description": "Passa la domanda al cervello avanzato, un'intelligenza artificiale molto più potente di te, che "
+                   "risponderà direttamente all'utente. Usalo per domande difficili, ragionamenti lunghi, problemi di "
                    "matematica o logica, consigli importanti, programmazione, compiti di scuola complessi, o quando "
                    "non sei sicuro della risposta. Non usarlo per saluti, chiacchiere, meteo, calcoli semplici, "
                    "timer o per aprire programmi.",
@@ -312,8 +312,8 @@ def prompt_di_sistema(config, modello, capacita, fatti, adesso=None, cervello_av
             "e per aprire programmi l'utente può usare i comandi elencati da /aiuto."
         )
     if cervello_avanzato:
-        righe.append("- Per le domande difficili puoi passare la parola al cervello avanzato (Claude) con lo "
-                     "strumento chiedi_al_cervello_avanzato.")
+        righe.append("- Per le domande difficili puoi passare la parola al cervello avanzato, un modello molto più "
+                     "potente di te, con lo strumento chiedi_al_cervello_avanzato.")
     if not config["internet"]:
         righe.append("- Non sei collegato a internet.")
     righe += [
@@ -344,8 +344,8 @@ class Assistente:
         self.ragionamento = bool(config["ragionamento"])
         self.limite = max(2, int(config["messaggi_da_ricordare"]))
         self.capacita = {}  # modello → cosa sa fare secondo Ollama ("tools", "thinking", ...)
-        self.modello_ragionamento = None  # modello per il ragionamento profondo, se disponibile
-        self.ragionamento_da_installare = ""
+        self.modello_grande = None  # il cervello grande sul PC, se installato
+        self.grande_da_installare = ""
         self.pensa_sempre = set()  # modelli che ragionano anche quando non glielo si chiede
         self.supporta_strumenti = False
         self.supporta_ragionamento = False
@@ -387,21 +387,27 @@ class Assistente:
         self._richiesta("/api/chat", dati, timeout).close()
 
     def _modello_attuale(self):
-        if self.ragionamento and self.modello_ragionamento:
-            return self.modello_ragionamento
+        if self.ragionamento and self.modello_grande:
+            return self.modello_grande
         return self.modello
 
     def _usa_claude(self):
         modo = self.config["cervello"]
         return self.claude.pronto and (modo == "claude" or (modo == "ibrido" and self.ragionamento))
 
-    def _claude_su_richiesta(self):
-        """In modalità ibrida il modello locale può passare le domande difficili a Claude."""
-        return self.claude.pronto and self.config["cervello"] == "ibrido"
+    def _cervello_avanzato(self):
+        """A chi il modello veloce può passare le domande difficili: "claude", "grande" oppure None."""
+        modo = self.config["cervello"]
+        if modo == "ibrido" and self.claude.pronto:
+            return "claude"
+        if modo == "locale" and self.modello_grande:
+            return "grande"
+        return None
 
     def _aggiorna_ragionamento(self):
         claude = self.claude.pronto and self.config["cervello"] != "locale"
-        self.supporta_ragionamento = claude or self.modello_ragionamento is not None
+        locale = self.modello_grande is not None or "thinking" in self.capacita.get(self.modello, ())
+        self.supporta_ragionamento = claude or locale
 
     def avvia(self):
         with self._richiesta("/api/tags", timeout=5) as risposta:
@@ -420,14 +426,12 @@ class Assistente:
                 f"Apri il Prompt dei comandi e scrivi:\n    ollama pull {self.modello}"
             )
         self.capacita[self.modello] = capacita(self.modello)
-        secondo = self.config["modello_ragionamento"]
-        if secondo and secondo != self.modello and installato(secondo):
-            self.capacita[secondo] = capacita(secondo)
-            self.modello_ragionamento = secondo
-        elif "thinking" in self.capacita[self.modello]:
-            self.modello_ragionamento = self.modello
-        elif secondo:
-            self.ragionamento_da_installare = secondo
+        grande = self.config["modello_grande"]
+        if grande and grande != self.modello and installato(grande):
+            self.capacita[grande] = capacita(grande)
+            self.modello_grande = grande
+        elif grande and grande != self.modello:
+            self.grande_da_installare = grande
         self.supporta_strumenti = "tools" in self.capacita[self.modello]
         self._aggiorna_ragionamento()
         if not self._usa_claude():
@@ -449,30 +453,33 @@ class Assistente:
         else:
             righe.append(
                 "Questo modello non sa usare gli strumenti da solo: usa i comandi (/aiuto), "
-                "oppure installa qwen3:4b-instruct."
+                "oppure installa qwen3.5:4b."
             )
         modo = self.config["cervello"]
-        if modo != "locale":
+        if modo == "locale":
+            if self.modello_grande:
+                righe.append(f"Cervello grande sul PC: {self.modello_grande}, per le domande difficili e il "
+                             "ragionamento profondo. Tutto gratis e privato.")
+            elif self.grande_da_installare:
+                righe.append(f"Per il cervello grande installa {self.grande_da_installare}: "
+                             f"ollama pull {self.grande_da_installare}")
             if self.claude.pronto:
-                uso = ("rispondo sempre con lui" if modo == "claude"
-                       else "lo uso per il ragionamento profondo e per le domande difficili")
-                righe.append(f"Cervello avanzato: Claude ({self.claude.modello}), {uso}.")
-                spesa = cervello_claude.leggi_costi()["mesi"].get(f"{datetime.now():%Y-%m}", 0.0)
-                righe.append(f"Spesa con Claude questo mese: {cervello_claude.dollari(spesa)} (/costi).")
-            else:
-                righe.append(f"Cervello avanzato non disponibile: {self.claude.problema}.")
+                righe.append("Claude è in riserva, spento (/cervello ibrido per usarlo).")
+        elif self.claude.pronto:
+            uso = ("rispondo sempre con lui" if modo == "claude"
+                   else "lo uso per il ragionamento profondo e per le domande difficili")
+            righe.append(f"Cervello avanzato: Claude ({self.claude.modello}), {uso}.")
+            spesa = cervello_claude.leggi_costi()["mesi"].get(f"{datetime.now():%Y-%m}", 0.0)
+            righe.append(f"Spesa con Claude questo mese: {cervello_claude.dollari(spesa)} (/costi).")
+        else:
+            righe.append(f"Claude non è disponibile: {self.claude.problema}.")
         if self.supporta_ragionamento:
             if self.claude.pronto and modo != "locale":
                 con = " (con Claude)"
             else:
-                con = f" (con {self.modello_ragionamento})" if self.modello_ragionamento != self.modello else ""
+                con = f" (con {self.modello_grande})" if self.modello_grande else ""
             stato = "attivo" if self.ragionamento else "spento"
             righe.append(f"Ragionamento profondo{con}: {stato} (/pensa per cambiarlo).")
-        elif self.ragionamento_da_installare:
-            righe.append(
-                f"Per il ragionamento profondo installa {self.ragionamento_da_installare}: "
-                f"ollama pull {self.ragionamento_da_installare}"
-            )
         if self.fatti:
             quante = "1 cosa" if len(self.fatti) == 1 else f"{len(self.fatti)} cose"
             righe.append(f"Ho {quante} in memoria (/memoria per vederle).")
@@ -496,8 +503,9 @@ class Assistente:
     def _prompt_di_sistema(self, modello):
         if modello.startswith("claude"):
             return prompt_di_sistema(self.config, modello, {"tools"}, self.fatti)
+        avanzato = self._cervello_avanzato() is not None and modello != self.modello_grande
         return prompt_di_sistema(self.config, modello, self.capacita.get(modello, ()), self.fatti,
-                                 cervello_avanzato=self._claude_su_richiesta())
+                                 cervello_avanzato=avanzato)
 
     def imposta_chiave(self, chiave):
         """Salva la chiave API di Claude (la chiedono la finestra o la modalità testo, senza mostrarla)."""
@@ -600,8 +608,8 @@ class Assistente:
                     self.ragionamento = not self.ragionamento
                     stato = "attivo: risposte più accurate ma più lente" if self.ragionamento else "spento"
                     yield ("info", f"Ragionamento profondo {stato}.")
-                elif self.ragionamento_da_installare:
-                    yield ("info", f"Prima installa il modello: ollama pull {self.ragionamento_da_installare}")
+                elif self.grande_da_installare:
+                    yield ("info", f"Prima installa il cervello grande: ollama pull {self.grande_da_installare}")
                 else:
                     yield ("info", f"Il modello {self.modello} non supporta il ragionamento profondo.")
             elif nome == "costi":
@@ -617,7 +625,7 @@ class Assistente:
                 else:
                     avviso = self._salva_impostazione("cervello", argomento)
                     self._aggiorna_ragionamento()
-                    spiegazione = {"locale": "uso solo il modello sul PC.",
+                    spiegazione = {"locale": "uso solo i modelli sul PC: tutto gratis e privato.",
                                    "ibrido": "uso il modello sul PC e Claude per le cose difficili.",
                                    "claude": "rispondo sempre con Claude."}[argomento]
                     problema = "" if self.claude.pronto or argomento == "locale" else \
@@ -701,9 +709,10 @@ class Assistente:
             del self.cronologia[:-self.limite]
             self._salva_conversazione()
 
-    def _con_ollama(self, pulitore, risposta, stop, con_strumenti):
-        modello = self._modello_attuale()
+    def _con_ollama(self, pulitore, risposta, stop, con_strumenti, modello=None):
+        modello = modello or self._modello_attuale()
         capacita = self.capacita.get(modello, set())
+        avanzato = None if modello == self.modello_grande else self._cervello_avanzato()
         messaggi = [{"role": "system", "content": self._prompt_di_sistema(modello)}] + self.cronologia
         for giro in range(GIRI_STRUMENTI + 1):
             dati = {"model": modello, "messages": messaggi, "stream": True, "options": {"num_ctx": CONTESTO}}
@@ -711,15 +720,19 @@ class Assistente:
                 dati["think"] = self.ragionamento or modello in self.pensa_sempre
             if con_strumenti and "tools" in capacita and giro < GIRI_STRUMENTI:
                 dati["tools"] = strumenti.schemi(self.config)
-                if self._claude_su_richiesta():
+                if avanzato:
                     dati["tools"].append(STRUMENTO_AVANZATO)
             contenuto, chiamate = yield from self._flusso(dati, pulitore, risposta, stop)
             if not chiamate:
                 return
             yield from self._emetti(pulitore.a_capo(), risposta)
-            if any(c.get("function", {}).get("name") == "chiedi_al_cervello_avanzato" for c in chiamate):
-                yield ("info", "Passo la domanda al cervello avanzato (Claude)...")
-                yield from self._con_claude(pulitore, risposta, stop, con_strumenti)
+            if avanzato and any(c.get("function", {}).get("name") == "chiedi_al_cervello_avanzato" for c in chiamate):
+                if avanzato == "claude":
+                    yield ("info", "Passo la domanda al cervello avanzato (Claude)...")
+                    yield from self._con_claude(pulitore, risposta, stop, con_strumenti)
+                else:
+                    yield ("info", f"Passo la domanda al cervello grande ({self.modello_grande})...")
+                    yield from self._con_ollama(pulitore, risposta, stop, con_strumenti, modello=self.modello_grande)
                 return
             messaggi.append({"role": "assistant", "content": contenuto, "tool_calls": chiamate})
             for chiamata in chiamate:

@@ -14,12 +14,12 @@ L'intelligenza artificiale gira **tutta sul tuo PC** grazie a Ollama: niente abb
 - **Volume e musica**: alza, abbassa, muto, pausa, canzone successiva o precedente.
 - **Ragionamento profondo**: per le domande difficili pensa prima di rispondere (più lento, più preciso).
 - **Sa cosa sa fare**: chiedigli "cosa sai fare?" o "quali sono i tuoi limiti?".
-- **Cervello avanzato**: per le domande difficili usa Claude, molto più intelligente
-  (vedi [Cervello avanzato](#cervello-avanzato-claude)).
+- **Due cervelli sul tuo PC**: uno veloce per tutto il resto e uno grande per le domande difficili,
+  gratis e privati (vedi [I cervelli di Jarvis](#i-cervelli-di-jarvis)). Claude è una riserva opzionale.
 - **Un modello tutto suo**: puoi addestrare un modello che ha il carattere di Jarvis
   (vedi [addestramento/README.md](addestramento/README.md)).
 
-Con il modello consigliato (`qwen3:4b-instruct`) usa gli strumenti **da solo**: basta chiedere
+Con i modelli consigliati usa gli strumenti **da solo**: basta chiedere
 "che tempo fa a Cagliari?", "chi era Leonardo da Vinci?", "apri youtube", "quanto fa 128 per 47?",
 "metti un timer di 10 minuti per la pasta", "come sta il PC?" o "alza il volume".
 
@@ -30,16 +30,17 @@ Se avevi già la prima versione di Jarvis, Python e Ollama sono già installati:
 1. **Python**: scaricalo da <https://www.python.org/downloads/> e installalo.
    Nella prima schermata spunta **"Add python.exe to PATH"**.
 2. **Ollama**: scaricalo da <https://ollama.com/download> e installalo.
-3. **Il "cervello"**: premi il tasto Windows, scrivi `cmd`, premi Invio e nella finestra nera scrivi
+3. **I "cervelli"**: premi il tasto Windows, scrivi `cmd`, premi Invio e nella finestra nera scrivi
    queste due righe (una alla volta, aspettando che la prima finisca):
 
    ```
-   ollama pull qwen3:4b-instruct
-   ollama pull qwen3:4b
+   ollama pull qwen3.5:4b
+   ollama pull qwen3.6:35b-a3b
    ```
 
-   Ognuno pesa circa 2,5 GB. Il primo risponde velocemente; il secondo serve solo per il
-   ragionamento profondo (se non lo installi, Jarvis funziona lo stesso, senza quella funzione).
+   Il primo (3,3 GB) è il cervello veloce. Il secondo (24 GB) è il cervello grande per le domande
+   difficili: servono almeno 25 GB liberi sul disco e 32 GB di RAM. Se non lo installi, Jarvis funziona
+   lo stesso, solo meno intelligente sulle domande difficili.
 4. **Jarvis**: scarica questa cartella `jarvis` sul PC (da GitHub: pulsante verde **Code → Download ZIP**,
    poi estrai lo ZIP). Se stai aggiornando e avevi cambiato `config.json`, ricopia le tue modifiche
    nel nuovo file.
@@ -95,9 +96,9 @@ Apri `config.json` con il Blocco note:
 | `dai_del`               | `"lei"` (formale, come il vero Jarvis) oppure `"tu"`            |
 | `citta`                 | la tua città: la usa per il meteo quando non dici dove          |
 | `modello`               | il modello per le risposte normali (vedi sotto)                 |
-| `modello_ragionamento`  | il modello per il ragionamento profondo; vuoto = nessuno        |
+| `modello_grande`        | il cervello grande per le domande difficili; vuoto = nessuno   |
 | `ragionamento`          | `true` per avere il ragionamento profondo già attivo all'avvio  |
-| `cervello`              | `"ibrido"`, `"locale"` o `"claude"` (vedi sotto)                |
+| `cervello`              | `"locale"`, `"ibrido"` o `"claude"` (vedi sotto)                |
 | `modello_claude`        | quale modello di Claude usare (predefinito `claude-opus-5-5`)   |
 | `sforzo_claude`         | quanto ragiona Claude: `low`, `medium`, `high` (più alto = più preciso e più caro) |
 | `mostra_costi`          | `false` per non vedere il costo di ogni risposta di Claude      |
@@ -124,49 +125,50 @@ di ogni `\`. Per esempio:
 
 Poi potrai dire "apri curseforge".
 
-## Quale modello usare
+## I cervelli di Jarvis
 
-Con una scheda video da 6 GB:
+| Cervello   | Modello              | Peso   | A cosa serve                                                          |
+|------------|----------------------|--------|-----------------------------------------------------------------------|
+| veloce     | `qwen3.5:4b`         | 3,3 GB | risponde a quasi tutto, usa gli strumenti; sta tutto nella scheda video |
+| grande     | `qwen3.6:35b-a3b`    | 24 GB  | le domande difficili e il ragionamento profondo; usa scheda video e RAM insieme |
+| addestrato | `jarvis`             | 3,3 GB | il cervello veloce con il carattere di Jarvis (vedi [addestramento](addestramento/README.md)) |
 
-| Modello             | Peso   | Note                                                                 |
-|---------------------|--------|----------------------------------------------------------------------|
-| `qwen3:4b-instruct` | 2,5 GB | **consigliato per `modello`**: veloce, usa gli strumenti da solo     |
-| `qwen3:4b`          | 2,5 GB | **consigliato per `modello_ragionamento`**: ragiona sempre prima di rispondere, quindi è più lento |
-| `qwen3:8b`          | 5,2 GB | più intelligente, ma lento: occupa quasi tutta la scheda video       |
-| `gemma3:4b`         | 3,3 GB | italiano molto naturale, ma non usa gli strumenti da solo: servono i comandi |
+Il cervello grande è un modello "MoE": è enorme, ma per ogni parola ne usa solo una piccola parte,
+per questo gira anche sul tuo PC. È più lento del veloce (qualche secondo per iniziare, poi alcune parole
+al secondo) e occupa molta RAM: **mentre giochi chiudi Jarvis**, così la memoria torna libera.
 
-Per cambiarlo: `ollama pull nome-modello` nel Prompt dei comandi, poi cambia `modello` in `config.json`.
+Il cervello veloce decide da solo quando una domanda è difficile e la passa al grande
+("Passo la domanda al cervello grande..."). Con **Ragionamento profondo** attivo risponde sempre il grande,
+e ragiona prima di rispondere.
 
-Alcuni modelli (come `qwen3:4b`) ragionano sempre, anche quando non serve. Jarvis nasconde quel
-ragionamento: nella finestra scompare da solo; nel Prompt dei comandi può comparire una volta,
-poi Jarvis impara a nasconderlo.
+Per cambiare modello: `ollama pull nome-modello` nel Prompt dei comandi, poi cambia `modello` o
+`modello_grande` in `config.json`. Alcuni modelli ragionano sempre, anche quando non serve: Jarvis
+nasconde quel ragionamento.
 
-## Cervello avanzato (Claude)
-
-Il modello sul tuo PC è veloce e gratuito, ma piccolo. Per le domande difficili Jarvis può usare
-**Claude**, molto più intelligente, tramite l'API di Anthropic.
-
-**Come attivarlo:**
-1. Nel Prompt dei comandi: `python -m pip install anthropic`.
-2. Su <https://console.anthropic.com> crea una chiave API. Lì imposta anche un **limite di spesa
-   mensile** (Settings → Limits), così non puoi spendere più di quanto vuoi.
-3. In Jarvis scrivi `/chiave` e incollala. Resta salvata solo sul tuo PC, in `dati/chiave_claude.txt`.
-   **Non mandarla mai a nessuno e non incollarla in chat.**
-
-**Le tre modalità** (`/cervello ...`):
+### Le tre modalità (`/cervello ...`)
 
 | Modalità  | Come funziona                                                                              |
 |-----------|--------------------------------------------------------------------------------------------|
-| `ibrido`  | **consigliata**: risponde il modello del PC; le domande difficili e il ragionamento profondo passano a Claude |
-| `locale`  | solo il modello del PC: gratis e tutto privato                                             |
-| `claude`  | risponde sempre Claude: più intelligente, ma ogni risposta costa                           |
+| `locale`  | **predefinita**: cervello veloce e cervello grande, tutto sul PC, gratis e privato         |
+| `ibrido`  | cervello veloce sul PC; le domande difficili e il ragionamento profondo passano a Claude    |
+| `claude`  | risponde sempre Claude                                                                     |
 
-**Quanto costa:** Claude si paga a consumo. Una risposta normale costa di solito meno di un centesimo
-di dollaro, una lunga con ricerche sul web qualche centesimo. Dopo ogni risposta Jarvis mostra una stima
-del costo; `/costi` mostra il totale del mese. Il conto preciso è sempre su console.anthropic.com.
+### Claude (riserva opzionale)
 
-Con Claude, Jarvis può anche **cercare sul web** davvero (se la ricerca web è attiva sul tuo account
-Anthropic: si attiva nelle impostazioni della console).
+Claude è più intelligente anche del cervello grande, ma funziona via internet e si paga a consumo.
+È spento finché non scrivi `/cervello ibrido` o `/cervello claude`.
+
+**Come prepararlo:**
+1. Nel Prompt dei comandi: `python -m pip install anthropic`.
+2. Su <https://console.anthropic.com> crea una chiave API. Lì imposta anche un **limite di spesa
+   mensile**, così non puoi spendere più di quanto vuoi.
+3. In Jarvis scrivi `/chiave` e incollala. Resta salvata solo sul tuo PC, in `dati/chiave_claude.txt`.
+   **Non mandarla mai a nessuno e non incollarla in chat.**
+
+**Quanto costa:** una risposta normale costa di solito meno di un centesimo di dollaro, una lunga con
+ricerche sul web qualche centesimo. Dopo ogni risposta Jarvis mostra una stima del costo; `/costi`
+mostra il totale del mese. Il conto preciso è sempre su console.anthropic.com. Con Claude, Jarvis può
+anche **cercare sul web** davvero, se la ricerca web è attiva nelle impostazioni del tuo account.
 
 ## Prova di compatibilità
 
@@ -212,4 +214,4 @@ Usano Ollama, Claude e internet finti: non costano niente e non toccano i tuoi d
 - **La finestra non si apre**: avvia con `python jarvis.py` dal Prompt dei comandi per vedere l'errore.
   Se dice che manca tkinter, reinstalla Python lasciando spuntata l'opzione "tcl/tk and IDLE".
 - **"Questo modello non sa usare gli strumenti da solo"**: stai usando un modello come `gemma3:4b`;
-  usa i comandi oppure passa a `qwen3:4b-instruct`.
+  usa i comandi oppure passa a `qwen3.5:4b`.

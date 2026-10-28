@@ -19,10 +19,13 @@ def _testo(messaggio):
 
 
 class FintoOllama(BaseHTTPRequestHandler):
-    """qwen3:4b-instruct usa gli strumenti; qwen3:4b ragiona sempre e con think=false lo scrive nel testo."""
+    """qwen3.5:4b è il modello veloce, qwen3.6:35b-a3b quello grande; qwen3:4b ragiona sempre e con
+    think=false scrive il ragionamento nel testo."""
 
     richieste = []
-    CAPACITA = {"qwen3:4b-instruct": ["completion", "tools"], "qwen3:4b": ["completion", "tools", "thinking"]}
+    CAPACITA = {"qwen3.5:4b": ["completion", "tools", "thinking", "vision"],
+                "qwen3.6:35b-a3b": ["completion", "tools", "thinking", "vision"],
+                "qwen3:4b": ["completion", "tools", "thinking"]}
 
     def log_message(self, *argomenti):
         pass
@@ -49,7 +52,7 @@ class FintoOllama(BaseHTTPRequestHandler):
         ultimo = dati["messages"][-1]
         strumenti = [s["function"]["name"] for s in dati.get("tools", [])]
         parti = []
-        if modello == "qwen3:4b" and dati.get("think"):
+        if dati.get("think"):
             parti.append({"message": {"content": "", "thinking": "ragiono"}})
         elif modello == "qwen3:4b":
             parti += [{"message": {"content": c}} for c in ["Okay, the user ", "asks something.", "</think>", "\n\n"]]
