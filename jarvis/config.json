@@ -1,0 +1,7 @@
+{
+  "nome": "Jarvis",
+  "come_chiamarmi": "",
+  "modello": "gemma3:4b",
+  "ollama_url": "http://localhost:11434",
+  "messaggi_da_ricordare": 20
+}
